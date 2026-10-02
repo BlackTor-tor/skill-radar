@@ -17,6 +17,8 @@ def _scalar(s):
     if s.startswith("[") and s.endswith("]"):
         inner = s[1:-1].strip()
         return [_scalar(p) for p in inner.split(",")] if inner else []
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in "\"'":
+        return s[1:-1]
     if s.lower() in ("true", "false"):
         return s.lower() == "true"
     if re.fullmatch(r"-?\d+", s):
@@ -64,3 +66,52 @@ def load_yaml(text):
             if val.strip():
                 out[cur_key] = _scalar(val)
     return out
+
+CATEGORIES = {"THEFT", "EXEC", "PERSIST", "EXFIL", "INJ", "ABUSE", "DECEP", "SUPPLY"}
+SEVERITIES = {"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"}
+SEVERITY_WEIGHT = {"CRITICAL": 40, "HIGH": 25, "MEDIUM": 10, "LOW": 3, "INFO": 0}
+
+@dataclass
+class Rule:
+    id: str
+    category: str
+    severity: str
+    description: str
+    patterns: list = field(default_factory=list)
+    source: list = field(default_factory=list)
+    sink: list = field(default_factory=list)
+    pairing: str = None          # None | "same_file" | "cross_file"
+    refs: list = field(default_factory=list)
+    file_globs: list = field(default_factory=list)
+    enabled: bool = True
+
+def parse_rules(text_or_path):
+    text = text_or_path
+    if "\n" not in text_or_path and os.path.isfile(text_or_path):
+        text = open(text_or_path, encoding="utf-8", errors="ignore").read()
+    rules = []
+    for item in load_yaml(text):
+        for key in ("id", "category", "severity"):
+            if key not in item:
+                raise ValueError(f"rule missing '{key}': {item}")
+        if item["category"] not in CATEGORIES:
+            raise ValueError(f"unknown category: {item['category']}")
+        if item["severity"] not in SEVERITIES:
+            raise ValueError(f"unknown severity: {item['severity']}")
+        src, snk = item.get("pattern_source"), item.get("pattern_sink")
+        pairing = item.get("pairing")
+        if (src or snk) and not (src and snk and pairing):
+            raise ValueError(f"rule {item['id']}: pairing rules need pattern_source+pattern_sink+pairing")
+        for p in item.get("patterns", []) + list(src or []) + list(snk or []):
+            try:
+                re.compile(p)
+            except re.error as e:
+                raise ValueError(f"rule {item['id']}: bad regex {p!r}: {e}")
+        r = Rule(id=item["id"], category=item["category"], severity=item["severity"],
+                 description=item.get("description", ""),
+                 patterns=item.get("patterns", []),
+                 source=src, sink=snk, pairing=pairing,
+                 refs=item.get("refs", []), file_globs=item.get("file_globs", []),
+                 enabled=item.get("enabled", True))
+        rules.append(r)
+    return rules
