@@ -184,3 +184,69 @@ def run_pairing(rule, files):
                                    ln.strip()[:200],
                                    f"{rule.description} (source: {where})", rule.refs))
     return out
+
+# ---------------------------------------------------------------- L3 混淆检测
+
+ZERO_WIDTH = "\u200b\u200c\u200d\u2060\ufeff"
+ENTROPY_THRESHOLD, ENTROPY_MIN_LEN = 4.5, 32
+BLOB_MIN_LEN = 24
+
+def _entropy(s):
+    if not s: return 0.0
+    counts = {}
+    for ch in s: counts[ch] = counts.get(ch, 0) + 1
+    n = len(s)
+    return -sum(c / n * math.log2(c / n) for c in counts.values())
+
+def _decode_candidates(text):
+    """产出 (层数, 解码文本)。base64/hex/rot13；递归上限 5 层。"""
+    found = []
+    def _dec(t, depth):
+        if depth > 5: return
+        for tok in re.findall(r"[A-Za-z0-9+/=]{%d,}" % BLOB_MIN_LEN, t):
+            for cand in _try_b64(tok) + _try_hex(tok) + _try_rot13(tok):
+                found.append((depth + 1, cand)); _dec(cand, depth + 1)
+    _dec(text, 0)
+    return found
+
+def _try_b64(tok):
+    try:
+        pad = tok + "=" * (-len(tok) % 4)
+        raw = base64.b64decode(pad, validate=True)
+        txt = raw.decode("utf-8")
+        return [txt] if sum(c.isprintable() for c in txt) / max(len(txt), 1) > 0.85 else []
+    except Exception: return []
+
+def _try_hex(tok):
+    try:
+        txt = bytes.fromhex(tok).decode("utf-8")
+        return [txt] if sum(c.isprintable() for c in txt) / max(len(txt), 1) > 0.85 else []
+    except Exception: return []
+
+def _try_rot13(tok):
+    t = codecs.decode(tok, "rot_13")
+    return [t] if t != tok and re.search(r"[a-z]{4}", t) else []
+
+def run_l3(files, rules, max_depth=5):
+    findings = []
+    for rel, text in files:
+        for i, line in enumerate(text.splitlines(), 1):
+            if len(line.strip()) >= ENTROPY_MIN_LEN and _entropy(line) > ENTROPY_THRESHOLD:
+                findings.append(Finding("SR-OBFUS-001", "OBFUS", "HIGH", rel, i,
+                    line.strip()[:200], f"高熵内容 (entropy={_entropy(line):.2f})", []))
+            if any(ch in line for ch in ZERO_WIDTH):
+                findings.append(Finding("SR-OBFUS-002", "OBFUS", "HIGH", rel, i,
+                    line.strip()[:200], "隐藏字符（零宽/ homoglyph 标记）", []))
+        for depth, decoded in _decode_candidates(text):
+            if depth > max_depth:
+                continue
+            sub_files = [(f"{rel} (decoded L{depth})", decoded)]
+            hits = []
+            for rule in rules:
+                hits.extend(run_l1(rule, sub_files))
+                hits.extend(run_pairing(rule, sub_files))
+            for h in hits:   # 解码后命中：镜像一条固定 rule_id 的 OBFUS finding
+                findings.append(Finding("SR-OBFUS-003", "OBFUS", "HIGH", h.file, h.line,
+                    h.excerpt, f"解码内容命中规则 {h.rule_id}: {h.message}", []))
+            findings.extend(hits)
+    return findings
