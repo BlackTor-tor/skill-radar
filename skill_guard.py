@@ -163,3 +163,24 @@ def run_l1(rule, files):
                 out.append(Finding(rule.id, rule.category, rule.severity, rel, i,
                                    line.strip()[:200], rule.description, rule.refs))
     return out
+
+def _hit_lines(regexes, text):
+    return [(i, ln) for i, ln in enumerate(text.splitlines(), 1) if _match_line(ln, regexes)]
+
+def run_pairing(rule, files):
+    """source 行与 sink 行按 pairing 语义配对；finding 报在 sink 行，消息含 source 位置。"""
+    if not rule.enabled or not (rule.source and rule.sink):
+        return []
+    src_hits = [(rel, i, ln) for rel, text in files for (i, ln) in _hit_lines(rule.source, text)]
+    if not src_hits:
+        return []
+    out = []
+    for rel, text in files:
+        for i, ln in _hit_lines(rule.sink, text):
+            partners = [s for s in src_hits if rule.pairing == "cross_file" or s[0] == rel]
+            if partners:
+                where = ", ".join(f"{p[0]}:{p[1]}" for p in partners[:3])
+                out.append(Finding(rule.id, rule.category, rule.severity, rel, i,
+                                   ln.strip()[:200],
+                                   f"{rule.description} (source: {where})", rule.refs))
+    return out
