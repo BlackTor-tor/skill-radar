@@ -280,6 +280,11 @@ def render_report(rep):
 
 def check_blocklist(yaml_text, name, repo, hashes):
     """命中技能名 / 仓库 / 任一文件哈希 → CRITICAL finding（category SUPPLY）。"""
+    if isinstance(yaml_text, str):
+        body = "\n".join(ln.strip() for ln in yaml_text.splitlines()
+                         if ln.strip() and not ln.lstrip().startswith("#"))
+        if body in ("[]", ""):   # 空黑名单 / 字面量 []（load_yaml 不支持）→ 无条目
+            return []
     entries = load_yaml(yaml_text) if isinstance(yaml_text, str) else yaml_text
     out = []
     for e in entries:
@@ -296,3 +301,51 @@ def check_blocklist(yaml_text, name, repo, hashes):
                     out.append(Finding("SR-BLOCK-001", "SUPPLY", "CRITICAL", rel, 1,
                                        sha[:16], f"blocklist 命中 hash {rel}（{e.get('source','')}）", []))
     return out
+
+# ---------------------------------------------------------------- 引擎编排与 CLI
+
+def run_engine(root, rules, blocklist_text="[]", max_depth=5):
+    """编排全引擎：收集文件 → L1+L2（逐规则）+ L3（一次）→ blocklist → 评分。
+
+    ok 语义：无 CRITICAL 即 PASS；文件哈希按 utf-8（errors="replace"）逐文件 sha256。
+    """
+    files = collect_text_files(root)
+    findings = []
+    for r in rules:
+        findings.extend(run_l1(r, files))
+        findings.extend(run_pairing(r, files))
+    findings.extend(run_l3(files, rules, max_depth=max_depth))
+    name = os.path.basename(os.path.normpath(root))
+    hashes = {rel: hashlib.sha256(t.encode("utf-8", errors="replace")).hexdigest()
+              for rel, t in files}
+    findings.extend(check_blocklist(blocklist_text, name=name, repo="", hashes=hashes))
+    score = score_findings(findings)
+    return ScanReport(name, root, findings, score, len(files),
+                      ok=not any(f.severity == "CRITICAL" for f in findings))
+
+def main(argv=None):
+    """scan 子命令 CLI；统一返回退出码（--strict 且有 CRITICAL → 1），不内部 raise SystemExit。"""
+    import argparse
+    ap = argparse.ArgumentParser(prog="skill-radar guard")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p_scan = sub.add_parser("scan")
+    p_scan.add_argument("target")
+    p_scan.add_argument("--rules", default=os.path.join(os.path.dirname(__file__), "rules", "defaults.yaml"))
+    p_scan.add_argument("-f", "--rules-inline", dest="rules_inline")
+    p_scan.add_argument("--blocklist", default=os.path.join(os.path.dirname(__file__), "rules", "blocklist.yaml"))
+    p_scan.add_argument("--strict", action="store_true")
+    p_scan.add_argument("--json", action="store_true")
+    p_scan.add_argument("--yes", action="store_true")
+    args = ap.parse_args(argv)
+    if args.cmd == "scan":
+        target = args.target   # 任务 10 在此接入 resolve_target()；本任务仅支持本地路径
+        rules = parse_rules(args.rules_inline) if args.rules_inline else parse_rules(args.rules)
+        rep = run_engine(target, rules, open(args.blocklist, encoding="utf-8").read())
+        print(render_report(rep) if not args.json else
+              json.dumps(rep.__dict__, default=lambda o: o.__dict__, ensure_ascii=False, indent=1))
+        if args.strict and not rep.ok:
+            return 1
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
