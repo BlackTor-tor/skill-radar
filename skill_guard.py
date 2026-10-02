@@ -320,11 +320,13 @@ def resolve_target(target, timeout=120):
 
 def _force_rmtree(path):
     """Windows 上 git 对象文件带只读属性，rmtree(ignore_errors=True) 会静默残留——
-    先逐文件清只读位再删；POSIX 上等价于普通 rmtree。"""
+    先逐条目按「原 mode | 写位」清出写位再删。必须按位或而非替换成裸 S_IWRITE：
+    POSIX 上替换会让目录丢失 r/x 位，os.walk 与 rmtree 随即双双静默失效（整树残留）。"""
     for dirpath, dirnames, filenames in os.walk(path):
         for name in dirnames + filenames:
+            p = os.path.join(dirpath, name)
             try:
-                os.chmod(os.path.join(dirpath, name), stat.S_IWRITE)
+                os.chmod(p, os.lstat(p).st_mode | stat.S_IWRITE)
             except OSError:
                 pass
     shutil.rmtree(path, ignore_errors=True)

@@ -1,5 +1,5 @@
 # tests/test_scan_url.py — 任务 10：git URL 支持（is_git_url / resolve_target / scan URL 分支）
-import json, os, shutil, subprocess, tempfile, textwrap
+import json, os, stat, subprocess, tempfile, textwrap
 import pytest
 from skill_guard import is_git_url, resolve_target, main, _force_rmtree
 
@@ -84,6 +84,30 @@ def test_scan_local_path_never_removed(tmp_path, capsys):
     assert main(["scan", str(d), "-f", RULES, "--strict"]) == 0
     assert "PASS" in capsys.readouterr().out
     assert d.exists()   # 本地路径绝不 rmtree
+
+def test_force_rmtree_chmod_preserves_mode(tmp_path, monkeypatch):
+    # 回归（第 1 轮审查，POSIX 语义；对任何平台都判定 chmod 实参）：
+    # chmod 必须「原 mode | S_IWRITE」按位或，不能替换成裸 S_IWRITE——
+    # 替换会让 POSIX 目录丢 r/x 位，os.walk 与 rmtree 随即双双静默失效（整树残留）。
+    tree = tmp_path / "tree"
+    (tree / "sub" / "deep").mkdir(parents=True)
+    (tree / "sub" / "deep" / "SKILL.md").write_text("# x", encoding="utf-8")
+    ro = tree / "sub" / "deep" / "ro.bin"
+    ro.write_bytes(b"data")
+    os.chmod(str(ro), 0o444)   # 只读文件：Windows=只读属性；POSIX=r--r--r--
+    real_chmod = os.chmod
+    calls = []
+    def spy_chmod(p, mode):
+        calls.append((os.fspath(p), mode, os.lstat(p).st_mode))
+        real_chmod(p, mode)    # 真实执行，保证 walk 继续深入、rmtree 正常收尾
+    monkeypatch.setattr(os, "chmod", spy_chmod)
+    _force_rmtree(str(tree))
+    monkeypatch.undo()
+    assert calls
+    for p, mode, orig in calls:
+        assert mode == orig | stat.S_IWRITE   # 保留原位、按位或（旧实现传 0o200 → 此处必失败）
+        assert mode != stat.S_IWRITE          # 不是替换
+    assert not tree.exists()                  # 整树删除成功，无残留
 
 # ------------------------------------------------- 网络集成测试：默认跳过
 
