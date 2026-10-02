@@ -250,3 +250,28 @@ def run_l3(files, rules, max_depth=5):
                     h.excerpt, f"解码内容命中规则 {h.rule_id}: {h.message}", []))
             findings.extend(hits)
     return findings
+
+# ---------------------------------------------------------------- 评分与报告
+
+@dataclass
+class ScanReport:
+    skill_name: str; root: str; findings: list; score: int; files_scanned: int; ok: bool
+
+def score_findings(findings):
+    return min(100, sum(SEVERITY_WEIGHT.get(f.severity, 0) for f in findings))
+
+def render_report(rep):
+    order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
+    fs = sorted(rep.findings, key=lambda f: (order.get(f.severity, 9), f.file, f.line))
+    lines = [f"skill: {rep.skill_name}   score: {rep.score}/100   files: {rep.files_scanned}"
+             f"   verdict: {'PASS' if rep.ok else 'FAIL'}"]
+    for f in fs:
+        lines.append(f"  {f.severity:<8} {f.rule_id:<14} {f.file}:{f.line}  {f.message}")
+        lines.append(f"           {f.excerpt}")
+    if not rep.ok:
+        lines.append("建议: 拒绝安装（存在 CRITICAL）。人工 inspect 后可用 --accept-drift 重新基线化已装技能。")
+    elif fs:
+        lines.append("建议: inspect 命中项；MEDIUM 及以下可接受时照常安装。")
+    else:
+        lines.append("建议: 未命中任何规则。")
+    return "\n".join(lines)
