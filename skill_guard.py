@@ -9,7 +9,7 @@ load_yaml 仅支持一个迷你 YAML 子集（规则与配置文件都用它）�
 - ``#`` 注释与空行。
 明确不支持多行字符串、锚点、深层嵌套——超出子集请用 PyYAML 自行转换。
 """
-import base64, codecs, hashlib, json, math, os, re, shutil, subprocess, sys, tempfile
+import base64, codecs, hashlib, json, math, os, re, shutil, stat, subprocess, sys, tempfile
 from dataclasses import dataclass, field
 
 def _scalar(s):
@@ -302,6 +302,33 @@ def check_blocklist(yaml_text, name, repo, hashes):
                                        sha[:16], f"blocklist 命中 hash {rel}（{e.get('source','')}）", []))
     return out
 
+# ---------------------------------------------------------------- git URL 支持
+
+def is_git_url(t):
+    """http(s)://、git@ 开头或 .git 结尾视为 git 源；其余按本地路径处理。"""
+    return t.startswith(("http://", "https://", "git@")) or t.endswith(".git")
+
+def resolve_target(target, timeout=120):
+    """本地路径原样返回；git URL 浅克隆到临时目录（调用方负责在扫描后 shutil.rmtree）。"""
+    if not is_git_url(target):
+        return target
+    base = tempfile.mkdtemp(prefix="skill-radar-scan-")
+    subprocess.run(["git", "clone", "--depth", "1", "-q", target, base],
+                   check=True, timeout=timeout,
+                   env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+    return base
+
+def _force_rmtree(path):
+    """Windows 上 git 对象文件带只读属性，rmtree(ignore_errors=True) 会静默残留——
+    先逐文件清只读位再删；POSIX 上等价于普通 rmtree。"""
+    for dirpath, dirnames, filenames in os.walk(path):
+        for name in dirnames + filenames:
+            try:
+                os.chmod(os.path.join(dirpath, name), stat.S_IWRITE)
+            except OSError:
+                pass
+    shutil.rmtree(path, ignore_errors=True)
+
 # ---------------------------------------------------------------- 引擎编排与 CLI
 
 def run_engine(root, rules, blocklist_text="[]", max_depth=5):
@@ -338,11 +365,18 @@ def main(argv=None):
     p_scan.add_argument("--yes", action="store_true")
     args = ap.parse_args(argv)
     if args.cmd == "scan":
-        target = args.target   # 任务 10 在此接入 resolve_target()；本任务仅支持本地路径
-        rules = parse_rules(args.rules_inline) if args.rules_inline else parse_rules(args.rules)
-        rep = run_engine(target, rules, open(args.blocklist, encoding="utf-8").read())
-        print(render_report(rep) if not args.json else
-              json.dumps(rep.__dict__, default=lambda o: o.__dict__, ensure_ascii=False, indent=1))
+        tmp = None   # URL 分支克隆出的临时目录；本地路径保持 None，绝不被 rmtree
+        target = resolve_target(args.target)
+        if is_git_url(args.target):
+            tmp = target
+        try:
+            rules = parse_rules(args.rules_inline) if args.rules_inline else parse_rules(args.rules)
+            rep = run_engine(target, rules, open(args.blocklist, encoding="utf-8").read())
+            print(render_report(rep) if not args.json else
+                  json.dumps(rep.__dict__, default=lambda o: o.__dict__, ensure_ascii=False, indent=1))
+        finally:
+            if tmp is not None:
+                _force_rmtree(tmp)
         if args.strict and not rep.ok:
             return 1
     return 0
