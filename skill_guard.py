@@ -137,3 +137,29 @@ def collect_text_files(root):
                 continue
             out.append((os.path.relpath(p, root), raw.decode("utf-8", errors="replace")))
     return out
+
+@dataclass
+class Finding:
+    rule_id: str
+    category: str
+    severity: str
+    file: str
+    line: int
+    excerpt: str
+    message: str
+    refs: list
+
+def _match_line(line, regexes):
+    return all(re.search(rx, line) for rx in regexes)
+
+def run_l1(rule, files):
+    """L1 模式引擎：patterns 全部命中同一行才算命中（行级 AND）。"""
+    if not rule.enabled or not rule.patterns:
+        return []
+    out = []
+    for rel, text in files:
+        for i, line in enumerate(text.splitlines(), 1):
+            if _match_line(line, rule.patterns):
+                out.append(Finding(rule.id, rule.category, rule.severity, rel, i,
+                                   line.strip()[:200], rule.description, rule.refs))
+    return out
