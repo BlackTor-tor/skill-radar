@@ -110,7 +110,7 @@ python skill_guard.py discover [--deep] [--yes]
 ## 9. 与 v1 的关系与 Roadmap
 
 - v1 `skill_monitor.py`（用量）回答"哪些技能在被用"；v2 `skill_guard.py`（安全）回答"哪些技能危险"。audit 报告末尾一行联动提示：**高危 + 零使用 = 优先删除候选**。不做深度耦合
-- v2.1：质量评分卡（触发条件显式度等启发式）；v2.2：IOC live feed；v3：跨技能运行时 Toxic Flow（与 monitor 集成）、LLM 深审 hook
+- v2.1：质量评分卡（触发条件显式度等启发式）；v2.1.x：L3 单字节 XOR 解码层（含 255-key 候选爆炸防护与专属 TDD，2026-10-02 审查裁定的跟踪项）；v2.2：IOC live feed；v3：跨技能运行时 Toxic Flow（与 monitor 集成）、LLM 深审 hook
 
 ## 调研来源
 
