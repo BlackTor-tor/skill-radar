@@ -1,0 +1,7 @@
+# local counters / state — never commit user data
+skill_usage.json
+skill_usage_state.json
+skill_markers.json
+update.log
+__pycache__/
+*.pyc
