@@ -70,6 +70,9 @@ def load_yaml(text):
 CATEGORIES = {"THEFT", "EXEC", "PERSIST", "EXFIL", "INJ", "ABUSE", "DECEP", "SUPPLY"}
 SEVERITIES = {"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"}
 SEVERITY_WEIGHT = {"CRITICAL": 40, "HIGH": 25, "MEDIUM": 10, "LOW": 3, "INFO": 0}
+EXCLUDED_DIRS = {"node_modules", ".git", "__pycache__", "AppData", "Library",
+                 "site-packages", ".venv", "venv", ".cargo", "target"}
+MAX_FILE_BYTES = 2 * 1024 * 1024
 
 @dataclass
 class Rule:
@@ -115,3 +118,22 @@ def parse_rules(text_or_path):
                  enabled=item.get("enabled", True))
         rules.append(r)
     return rules
+
+def collect_text_files(root):
+    """返回 [(relpath, text)]；空字节嗅探排除二进制，>2MB 跳过，排除目录整支剪枝。"""
+    out = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIRS]
+        for name in sorted(filenames):
+            p = os.path.join(dirpath, name)
+            try:
+                if os.path.getsize(p) > MAX_FILE_BYTES:
+                    continue
+                with open(p, "rb") as f:
+                    raw = f.read()
+            except OSError:
+                continue
+            if b"\x00" in raw:
+                continue
+            out.append((os.path.relpath(p, root), raw.decode("utf-8", errors="replace")))
+    return out
