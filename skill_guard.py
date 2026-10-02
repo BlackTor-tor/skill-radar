@@ -275,3 +275,24 @@ def render_report(rep):
     else:
         lines.append("建议: 未命中任何规则。")
     return "\n".join(lines)
+
+# ---------------------------------------------------------------- 供应链 blocklist
+
+def check_blocklist(yaml_text, name, repo, hashes):
+    """命中技能名 / 仓库 / 任一文件哈希 → CRITICAL finding（category SUPPLY）。"""
+    entries = load_yaml(yaml_text) if isinstance(yaml_text, str) else yaml_text
+    out = []
+    for e in entries:
+        if e.get("name") and e["name"] == name:
+            out.append(Finding("SR-BLOCK-001", "SUPPLY", "CRITICAL", "SKILL.md", 1,
+                               f"skill name {name}", f"blocklist 命中 name（{e.get('source','')}）", []))
+        if e.get("repo") and e["repo"] == repo:
+            out.append(Finding("SR-BLOCK-001", "SUPPLY", "CRITICAL", "SKILL.md", 1,
+                               f"repo {repo}", f"blocklist 命中 repo（{e.get('source','')}）", []))
+        h = e.get("hash")
+        if h:
+            for rel, sha in (hashes or {}).items():
+                if sha == h:
+                    out.append(Finding("SR-BLOCK-001", "SUPPLY", "CRITICAL", rel, 1,
+                                       sha[:16], f"blocklist 命中 hash {rel}（{e.get('source','')}）", []))
+    return out

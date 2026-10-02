@@ -1,0 +1,14 @@
+# rules/blocklist.yaml — 供应链 IOC 黑名单（check_blocklist 数据源）
+#
+# 格式：顶层为一个条目列表（块列表 `- ` 开头），每个条目可含以下三个匹配字段，
+# 任一字段与被扫技能相符即各产出一条 CRITICAL finding（rule_id=SR-BLOCK-001, category=SUPPLY）：
+#   name: 技能名（与 SKILL.md name 精确匹配）
+#   repo: 仓库标识（精确匹配，形如 owner/repo）
+#   hash: 文件 SHA-256（与扫描中任一文件哈希相符即命中，finding 定位到对应文件）
+#
+# 来源标注要求：每个条目必须带 source 字段，注明情报出处（如
+#   "ClawHavoc IOC list 2026-06, antiy.net"）；该来源会出现在命中 finding 的
+#   message 中，供人工复核追溯。
+#
+# 当前为空列表占位；真实 IOC 种子由计划二任务 8 填入。
+[]
