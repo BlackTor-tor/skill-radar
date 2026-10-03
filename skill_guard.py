@@ -846,6 +846,12 @@ def audit_roots(roots, rules_text, blocklist_text, snapshots, cfg, max_depth=5):
                             f"（用 --show-diff {entry} 查看）")
                 else:
                     new["status"] = old["status"]   # 未变化，保留原状态
+                    # prev_hashes 随保留的状态一并透传：DRIFT 确认后的一轮无变化
+                    # re-audit（watch 模式一轮轮询即触发）若不透传，prev_hashes
+                    # 随条目覆写丢失——状态仍 drifted、报告仍指路 --show-diff，
+                    # diff 却已退化为空（inspect 窗口被无变化轮询关闭）。
+                    if "prev_hashes" in old:
+                        new["prev_hashes"] = old["prev_hashes"]
                     head = f"OK        {entry}  score={rep.score}"
             rep.ok = rep.ok and new["status"] != "drifted"
             snapshots["skills"][skill] = new
