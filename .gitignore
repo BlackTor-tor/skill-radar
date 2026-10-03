@@ -5,3 +5,9 @@ skill_markers.json
 update.log
 __pycache__/
 *.pyc
+
+# v2.2 托盘客户端构建产物
+dist/
+build/
+*.spec
+tray_state.json

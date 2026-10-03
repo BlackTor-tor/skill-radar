@@ -156,6 +156,29 @@ open with a loud warning. One-line accelerator:
     # PowerShell
     function skills { python F:\path\to\skill_guard.py add -- skills @args }
 
+### SkillRadar Tray (v2.2, Windows + macOS)
+
+The optional tray daemon watches all registered skill roots in real time
+(pure-ctypes ReadDirectoryChangesW on Windows, FSEvents on macOS — no daemon
+framework, no new core dependencies) and reacts to changes in the skill pool:
+new skill or content drift → toast + tray badge; in block mode a CRITICAL
+verdict additionally quarantines the skill directory (opt-in, moved to
+`~/.skill-radar/quarantine/` with a RESTORE.txt note). The bundled UI
+(pywebview, offline single-file HTML) shows Overview / Security / Usage /
+Settings. Build it with:
+
+    pip install -r requirements-gui.txt
+    python build_tray.py          # Windows: dist/SkillRadarTray.exe (onefile)
+                                   # macOS: dist/SkillRadarTray.app + .dmg
+
+Event watching and `audit --watch` are complementary layers (spec §4):
+watching = second-level discovery + alerting; `--watch` polling = deep sweep
+for non-graphical environments. The tray client is GUI-optional — the five
+core .py files stay pure stdlib.
+
+macOS note: the bundle is unsigned / not notarized — on first launch,
+right-click the app and choose Open (roadmap: signing & notarization).
+
 ## Security Guard details
 
 The guard scans **all** text files inside a skill directory (attached scripts
@@ -305,6 +328,26 @@ fail-open 放行。一行加速器：
     alias skills='python /path/to/skill_guard.py add -- skills'
     # PowerShell
     function skills { python F:\path\to\skill_guard.py add -- skills @args }
+
+### SkillRadar 托盘（v2.2，Windows + macOS）
+
+可选的托盘守护进程实时监听所有已登记的技能根目录（Windows 用纯 ctypes 的
+ReadDirectoryChangesW，macOS 用 FSEvents——无守护框架、核心零新增依赖），
+并对技能池变化作出反应：新技能或内容漂移 → 气泡通知 + 托盘角标；阻断模式下
+CRITICAL 判定还会隔离技能目录（opt-in，移入
+`~/.skill-radar/quarantine/` 并留 RESTORE.txt 说明）。内置界面（pywebview，
+离线单文件 HTML）提供 总览 / 安全 / 用量 / 设置 四屏。构建方式：
+
+    pip install -r requirements-gui.txt
+    python build_tray.py          # Windows: dist/SkillRadarTray.exe（onefile）
+                                   # macOS: dist/SkillRadarTray.app + .dmg
+
+事件监听与 `audit --watch` 是互补的两层（规格 §4）：监听 = 秒级发现 + 告警；
+`--watch` 轮询 = 无图形环境下的深度巡检。托盘客户端的 GUI 是可选层——
+五个核心 .py 文件保持纯标准库。
+
+macOS 说明：产物未签名/未公证——首次启动请右键应用选「打开」
+（roadmap：签名与公证）。
 
 ### 安全闸门细节
 
