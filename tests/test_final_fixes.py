@@ -93,3 +93,66 @@ def test_clone_argv_disables_ext_protocol(monkeypatch):
     finally:
         _force_rmtree(base)
 
+# ============================================== 发现 4：repo IOC 在集成路径不可达
+
+BL_REPO = """
+- repo: bad-org/stealer
+  source: "test IOC list"
+"""
+
+def test_check_blocklist_repo_hit_direct():
+    f = check_blocklist(BL_REPO, name="innocent", repo="bad-org/stealer", hashes={})
+    assert f and f[0].rule_id == "SR-BLOCK-001" and f[0].severity == "CRITICAL"
+    assert "repo" in f[0].message
+
+def test_run_engine_repo_param_reaches_blocklist(tmp_path):
+    make_skill(str(tmp_path / "stealer"))
+    rep = run_engine(str(tmp_path / "stealer"), parse_rules(RULES),
+                     blocklist_text=BL_REPO, repo="bad-org/stealer")
+    hits = [x for x in rep.findings if x.rule_id == "SR-BLOCK-001"]
+    assert hits and hits[0].severity == "CRITICAL" and rep.ok is False
+
+def test_run_engine_default_repo_no_hit(tmp_path):
+    # 不传 repo（本地路径扫描默认 ""）：repo 条目不得误命中。
+    make_skill(str(tmp_path / "demo"))
+    rep = run_engine(str(tmp_path / "demo"), parse_rules(RULES), blocklist_text=BL_REPO)
+    assert not any(x.rule_id == "SR-BLOCK-001" and "repo" in x.message for x in rep.findings)
+
+def test_repo_from_git_url_variants():
+    rf = skill_guard._repo_from_git_url
+    assert rf("https://github.com/owner/repo") == "owner/repo"
+    assert rf("https://github.com/owner/repo.git") == "owner/repo"
+    assert rf("https://gitlab.com/owner/repo.git/") == "owner/repo"
+    assert rf("git@github.com:owner/repo.git") == "owner/repo"
+    assert rf("some/local/repo.git") == "local/repo"
+    assert rf("repo.git") == ""          # 提取不到 owner 段 → 空
+    # 规则裁定为字面「后两段」：github.com/only 后两段即 github.com/only
+    assert rf("https://github.com/only") == "github.com/only"
+    assert rf(r"C:\tmp\local\demo-skill.git") == "local/demo-skill"  # Windows 路径
+
+def _git(repo, *args):
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True,
+                   env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+
+def test_scan_git_source_passes_repo_to_blocklist(tmp_path, capsys):
+    # 端到端：目录名以 .git 结尾 → URL 分支克隆扫描，repo 取 URL 后两段
+    # （<tmpdir 名>/demo-skill），blocklist 命中 → CRITICAL → --strict 退出 1。
+    src = tmp_path / "demo-skill.git"
+    src.mkdir()
+    open(os.path.join(str(src), "SKILL.md"), "w", encoding="utf-8").write("# clean skill")
+    _git(src, "init")
+    _git(src, "-c", "user.name=t", "-c", "user.email=t@example.com",
+         "-c", "commit.gpgsign=false", "add", "-A")
+    _git(src, "-c", "user.name=t", "-c", "user.email=t@example.com",
+         "-c", "commit.gpgsign=false", "commit", "-m", "init")
+    bl = f"""
+- repo: {tmp_path.name}/demo-skill
+  source: "test IOC list"
+"""
+    blp = tmp_path / "bl.yaml"
+    blp.write_text(bl, encoding="utf-8")
+    assert main(["scan", str(src), "-f", RULES, "--blocklist", str(blp),
+                 "--json", "--strict"]) == 1
+    data = json.loads(capsys.readouterr().out)
+    assert any(x["rule_id"] == "SR-BLOCK-001" for x in data["findings"])
+

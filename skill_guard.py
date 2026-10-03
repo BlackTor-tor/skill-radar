@@ -327,6 +327,19 @@ def is_git_url(t):
     """http(s)://、git@ 开头或 .git 结尾视为 git 源；其余按本地路径处理。"""
     return t.startswith(("http://", "https://", "git@")) or t.endswith(".git")
 
+def _repo_from_git_url(url):
+    """从 git URL 提取 owner/repo（路径后两段，形如 github.com/owner/repo 的
+    后两段；scp-like 冒号与 Windows 反斜杠视作斜杠，尾部 .git 剥离）。
+    提取不到（不足两段）返回 ""。"""
+    path = re.sub(r"^[A-Za-z][A-Za-z0-9+.-]*://", "", url)   # 剥 scheme
+    path = path.split("@")[-1].replace(":", "/").replace("\\", "/")
+    parts = [p for p in path.split("/") if p]
+    if parts and parts[-1].endswith(".git"):
+        parts[-1] = parts[-1][:-4]
+    if len(parts) < 2:
+        return ""
+    return f"{parts[-2]}/{parts[-1]}"
+
 def resolve_target(target, timeout=120):
     """本地路径原样返回；git URL 浅克隆到临时目录（调用方负责在扫描后 shutil.rmtree）。
     clone 失败/超时：就地清理临时目录后原样抛出，不留 %TEMP% 残留。"""
@@ -360,10 +373,11 @@ def _force_rmtree(path):
 
 # ---------------------------------------------------------------- 引擎编排与 CLI
 
-def run_engine(root, rules, blocklist_text="[]", max_depth=5):
+def run_engine(root, rules, blocklist_text="[]", max_depth=5, repo=""):
     """编排全引擎：收集文件 → L1+L2（逐规则）+ L3（一次）→ blocklist → 评分。
 
     ok 语义：无 CRITICAL 即 PASS；文件哈希按 utf-8（errors="replace"）逐文件 sha256。
+    repo：git 源扫描时传入的 owner/repo 标识（供 blocklist repo IOC 匹配），本地路径默认 ""。
     """
     files = collect_text_files(root)
     findings = []
@@ -374,7 +388,7 @@ def run_engine(root, rules, blocklist_text="[]", max_depth=5):
     name = os.path.basename(os.path.normpath(root))
     hashes = {rel: hashlib.sha256(t.encode("utf-8", errors="replace")).hexdigest()
               for rel, t in files}
-    findings.extend(check_blocklist(blocklist_text, name=name, repo="", hashes=hashes))
+    findings.extend(check_blocklist(blocklist_text, name=name, repo=repo, hashes=hashes))
     score = score_findings(findings)
     return ScanReport(name, root, findings, score, len(files),
                       ok=not any(f.severity == "CRITICAL" for f in findings))
@@ -395,12 +409,14 @@ def main(argv=None):
     args = ap.parse_args(argv)
     if args.cmd == "scan":
         tmp = None   # URL 分支克隆出的临时目录；本地路径保持 None，绝不被 rmtree
+        repo = ""    # git 源时从 URL 提取 owner/repo 供 blocklist repo IOC 匹配
         target = resolve_target(args.target)
         if is_git_url(args.target):
             tmp = target
+            repo = _repo_from_git_url(args.target)
         try:
             rules = parse_rules(args.rules_inline) if args.rules_inline else parse_rules(args.rules)
-            rep = run_engine(target, rules, open(args.blocklist, encoding="utf-8").read())
+            rep = run_engine(target, rules, open(args.blocklist, encoding="utf-8").read(), repo=repo)
             print(render_report(rep) if not args.json else
                   json.dumps(rep.__dict__, default=lambda o: o.__dict__, ensure_ascii=False, indent=1))
         finally:
