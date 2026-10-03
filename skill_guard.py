@@ -858,6 +858,9 @@ def audit_roots(roots, rules_text, blocklist_text, snapshots, cfg, max_depth=5):
     for root in roots:
         if not os.path.isdir(root):
             continue
+        root = os.path.normpath(root)   # roots 来源混杂（builtin_roots 存正斜杠、
+        # 用户手写反斜杠）：不归一则快照键混用分隔符，同一技能会重复建基线且
+        # 断言/查找（--show-diff、--accept-drift 的路径比对）在 Windows 上失配。
         for entry in sorted(os.listdir(root)):
             skill = os.path.join(root, entry)
             if not _is_skill_dir(skill):

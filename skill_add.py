@@ -66,3 +66,93 @@ def resolve_mode(argv, cfg):
         sg.save_config(cfg)
     mode = "block" if (block or sg.check_consent(cfg, "add_block")) else "warn"
     return rest, mode
+
+
+def run_install(user_args):
+    """转调 `npx skills add <user_args>`（subprocess，退出码透传，规格 §1a 第 4 步）。
+    npx 未安装 → 127（与 shell 找不到命令的惯例一致）。"""
+    npx = shutil.which("npx")
+    if not npx:
+        print("[skill-radar] 未找到 npx（skills CLI 不可用），无法转调安装",
+              file=sys.stderr)
+        return 127
+    return subprocess.run([npx, "skills", "add", *user_args]).returncode
+
+
+def _repo_file(name):
+    """rules/ 下文件路径（网关与 CLI 同仓，规则口径一致）。"""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "rules", name)
+
+
+def baseline_new_skills():
+    """装后自动建快照基线（规格 §1a 第 5 步）：对注册根全量 audit_roots（NEW 即建
+    基线，已有技能维持漂移语义）→ 落盘 → 只打印 NEW 状态行（完整 audit 输出会
+    淹没安装命令的回显）。返回 NEW 行数。"""
+    cfg = sg.load_config()
+    rules_text = (open(_repo_file("defaults.yaml"), encoding="utf-8").read()
+                  if os.path.isfile(_repo_file("defaults.yaml")) else "")
+    bl_text = (open(_repo_file("blocklist.yaml"), encoding="utf-8").read()
+               if os.path.isfile(_repo_file("blocklist.yaml")) else "[]")
+    snaps = sg.load_snapshots()
+    roots = [r["path"] for r in cfg["roots"] if os.path.isdir(r["path"])]
+    summary = sg.audit_roots(roots, rules_text, bl_text, snaps, cfg)
+    sg.save_snapshots(snaps)
+    news = [ln for ln in summary if ln.startswith("NEW")]
+    for ln in news:
+        print(sg._sanitize(ln.split("\n")[0]))
+    return len(news)
+
+
+def cmd_add(argv):
+    """网关编排（规格 §1a 1-5 步）。返回退出码：拦截拒绝=1；其余=npx 透传码。"""
+    cfg = sg.load_config()
+    rest, mode = resolve_mode(argv, cfg)
+    rest = strip_passthrough_prefix(rest)
+    token, url, repo = extract_target(rest)
+    if url is None:
+        if not rest:
+            print("usage: skill_guard.py add [--block] -- <npx skills add 参数...>",
+                  file=sys.stderr)
+            return 2
+        print("[skill-radar] 未识别到可扫描的安装源，直接透传（不扫描）")
+        return run_install(rest)
+
+    tmp = None
+    try:
+        target = sg.resolve_target(url)
+        tmp = target if target != url else None
+        rules_text = (open(_repo_file("defaults.yaml"), encoding="utf-8").read()
+                      if os.path.isfile(_repo_file("defaults.yaml")) else "")
+        bl_text = (open(_repo_file("blocklist.yaml"), encoding="utf-8").read()
+                   if os.path.isfile(_repo_file("blocklist.yaml")) else "[]")
+        rep = sg.run_engine(target, sg.parse_rules(rules_text), bl_text, repo=repo)
+    except Exception as e:   # 设计裁定 3：fail-open 透传，醒目告警。
+        # 只捕 Exception：KeyboardInterrupt/SystemExit 必须原样穿透（CLI 惯例，
+        # 与 skill_guard.main 的 gate_consent 异常网口径一致）
+        print(f"[skill-radar] 装前扫描失败（{e}），按无扫描透传安装", file=sys.stderr)
+        if tmp is not None:
+            sg._force_rmtree(tmp)
+        return run_install(rest)
+
+    print(sg.render_report(rep))
+    verdict, _color, reason = sr.install_verdict(rep, "scanned")
+    print(f"安装建议: {verdict} —— {sg._sanitize(reason)}")
+    if tmp is not None:
+        sg._force_rmtree(tmp)
+
+    if verdict == "不推荐":
+        if mode == "block":
+            print("[skill-radar] 拦截模式（--block）：拒绝安装，不转调 skills CLI。",
+                  file=sys.stderr)
+            return 1
+        print("[skill-radar] 警告模式：按建议继续安装（--block 可拦截此安装）。")
+
+    rc = run_install(rest)
+    if rc == 0:
+        try:
+            n = baseline_new_skills()
+            print(f"[skill-radar] 装后基线完成：新增 {n} 个技能快照")
+        except Exception as e:   # 基线失败不影响安装结果，只告警（KeyboardInterrupt 穿透）
+            print(f"[skill-radar] 装后基线失败（{e}），可手动运行 skill_guard.py audit 补建",
+                  file=sys.stderr)
+    return rc

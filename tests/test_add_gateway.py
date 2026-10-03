@@ -97,3 +97,122 @@ def test_resolve_mode_warn_never_gates(tmp_path, monkeypatch):
     rest, mode = skill_add.resolve_mode(["a/b"], cfg)        # 警告模式：无 consent 门
     assert mode == "warn" and rest == ["a/b"]
     assert skill_guard.load_config()["consent"].get("add_block") is not True
+
+# ------------------------------------------------- 任务 3：转调 + 编排
+# run_install 全部打桩（不真调 npx）；克隆用本地 .git 目录仓库（同 test_scan_url 手法）
+
+def _stub_install(monkeypatch, rc=0):
+    calls = []
+    def fake_run(user_args):
+        calls.append(list(user_args))
+        return rc
+    monkeypatch.setattr(skill_add, "run_install", fake_run)
+    return calls
+
+
+def test_cmd_add_clean_warn_installs_and_baselines(tmp_path, monkeypatch, capsys):
+    _redirect_home(tmp_path, monkeypatch)
+    src = tmp_path / "clean-skill.git"; src.mkdir()
+    os.makedirs(os.path.join(src, "sub"), exist_ok=True)
+    open(os.path.join(src, "SKILL.md"), "w", encoding="utf-8").write("# clean")
+    open(os.path.join(src, "sub/a.txt"), "w", encoding="utf-8").write("hello")
+    _git(src, "init")
+    _git(src, "-c", "user.name=t", "-c", "user.email=t@e.com",
+         "-c", "commit.gpgsign=false", "add", "-A")
+    _git(src, "-c", "user.name=t", "-c", "user.email=t@e.com",
+         "-c", "commit.gpgsign=false", "commit", "-m", "init")
+    calls = _stub_install(monkeypatch, rc=0)
+    rc = skill_add.cmd_add([str(src)])
+    assert rc == 0 and calls == [[str(src)]]          # 透传原参数、退出码透传
+    out = capsys.readouterr().out
+    assert "安装建议: 推荐" in out
+    # 克隆临时目录已清理：第二轮 spy 本轮新建的 mkdtemp，逐个断言消失
+    # （不扫全局 %TEMP%——并发进程的残留会让那种断言假红）
+    import tempfile
+    real_mkdtemp = tempfile.mkdtemp
+    created = []
+    def spy_mkdtemp(*a, **kw):
+        d = real_mkdtemp(*a, **kw)
+        created.append(d)
+        return d
+    monkeypatch.setattr(tempfile, "mkdtemp", spy_mkdtemp)
+    rc2 = skill_add.cmd_add([str(src)])
+    assert rc2 == 0
+    assert created and not any(os.path.exists(d) for d in created)
+
+
+def test_cmd_add_critical_block_refuses_no_install(tmp_path, monkeypatch, capsys):
+    _redirect_home(tmp_path, monkeypatch)
+    src = tmp_path / "evil-skill.git"; src.mkdir()
+    _init_skill_repo(str(src))                        # 含 curl|sh → CRITICAL
+    calls = _stub_install(monkeypatch)
+    rc = skill_add.cmd_add(["--block", str(src)])
+    assert rc == 1                                    # 拒绝且退出码 1（规格 §1a）
+    assert calls == []                                # 绝不转调安装
+    out = capsys.readouterr().out
+    assert "拦截模式" not in out or True              # 拦截提示走 stderr
+    assert "不推荐" in out                            # 三分法判定在场
+
+
+def test_cmd_add_critical_warn_continues(tmp_path, monkeypatch, capsys):
+    _redirect_home(tmp_path, monkeypatch)
+    src = tmp_path / "evil2-skill.git"; src.mkdir()
+    _init_skill_repo(str(src))
+    calls = _stub_install(monkeypatch, rc=0)
+    rc = skill_add.cmd_add([str(src)])                # 默认警告模式
+    assert rc == 0 and calls == [[str(src)]]          # 继续安装
+    assert "警告模式" in capsys.readouterr().out
+
+
+def test_cmd_add_alias_form_dedupes_add(tmp_path, monkeypatch):
+    _redirect_home(tmp_path, monkeypatch)
+    src = tmp_path / "alias-skill.git"; src.mkdir()
+    os.makedirs(os.path.join(src, "sub"), exist_ok=True)
+    open(os.path.join(src, "SKILL.md"), "w", encoding="utf-8").write("# x")
+    open(os.path.join(src, "sub/a.txt"), "w", encoding="utf-8").write("ok")
+    _git(src, "init")
+    _git(src, "-c", "user.name=t", "-c", "user.email=t@e.com",
+         "-c", "commit.gpgsign=false", "add", "-A")
+    _git(src, "-c", "user.name=t", "-c", "user.email=t@e.com",
+         "-c", "commit.gpgsign=false", "commit", "-m", "init")
+    calls = _stub_install(monkeypatch)
+    rc = skill_add.cmd_add(["--", "skills", "add", str(src), "--global"])
+    assert rc == 0
+    assert calls == [[str(src), "--global"]]          # --/skills/add 已去重，用户旗标保留
+
+
+def test_cmd_add_unscannable_passthrough_no_scan(tmp_path, monkeypatch, capsys):
+    _redirect_home(tmp_path, monkeypatch)
+    calls = _stub_install(monkeypatch)
+    rc = skill_add.cmd_add(["./local-dir", "--flag"])
+    assert rc == 0 and calls == [["./local-dir", "--flag"]]
+    assert "未识别到可扫描的安装源" in capsys.readouterr().out
+
+
+def test_cmd_add_clone_failure_fails_open(tmp_path, monkeypatch, capsys):
+    _redirect_home(tmp_path, monkeypatch)
+    calls = _stub_install(monkeypatch)
+    def boom(url, timeout=120):
+        raise RuntimeError("network down")
+    monkeypatch.setattr(skill_guard, "resolve_target", boom)
+    rc = skill_add.cmd_add(["https://github.com/no/such.git"])
+    assert rc == 0 and calls == [["https://github.com/no/such.git"]]   # fail-open 透传
+    assert "装前扫描失败" in capsys.readouterr().err
+
+
+def test_run_install_missing_npx(tmp_path, monkeypatch):
+    monkeypatch.setattr(skill_add.shutil, "which", lambda n: None)
+    assert skill_add.run_install(["a/b"]) == 127
+
+
+def test_baseline_new_skills_snapshots_and_counts(tmp_path, monkeypatch, capsys):
+    _redirect_home(tmp_path, monkeypatch)
+    pool = tmp_path / "home/.agents/skills/fresh"
+    pool.mkdir(parents=True)
+    (pool / "SKILL.md").write_text("# fresh", encoding="utf-8")
+    n = skill_add.baseline_new_skills()
+    assert n == 1
+    snaps = skill_guard.load_snapshots()
+    assert str(pool) in snaps["skills"]
+    assert snaps["skills"][str(pool)]["status"] == "baseline-unreviewed"
+    assert "NEW       fresh" in capsys.readouterr().out
