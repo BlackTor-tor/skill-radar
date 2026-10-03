@@ -560,5 +560,57 @@ def save_config(cfg):
                     lines.append(f"  {k2}: {dump(v2)}")
     open(_config_path(), "w", encoding="utf-8").write("\n".join(lines) + "\n")
 
+# ---------------------------------------------------------------- 快照存储与漂移比对
+
+def load_snapshots():
+    """读 snapshots.json：结构 ``{"version": 1, "skills": {绝对路径: 快照}}``。
+
+    文件缺失 → 空基线 ``{"version": 1, "skills": {}}``。SNAPSHOTS_NAME 在函数体内
+    按全局名**运行时**查找（非导入期绑定到局部），故测试 monkeypatch
+    ``skill_guard.SNAPSHOTS_NAME`` 即可整体重定向读写（与 _config_path 的
+    派生模式等义的隔离约定）。"""
+    if not os.path.isfile(SNAPSHOTS_NAME):
+        return {"version": 1, "skills": {}}
+    return json.load(open(SNAPSHOTS_NAME, encoding="utf-8"))
+
+def save_snapshots(data):
+    """将快照结构落盘（load_snapshots 的对称格式；ensure_ascii=False 保非 ASCII 原样）。
+
+    建目录基于 SNAPSHOTS_NAME 的 dirname 而非 GUARD_DIR：SNAPSHOTS_NAME 被
+    monkeypatch 到任意路径时（如测试临时文件 s.json），目录创建随之重定向，
+    不会触碰真实 ~/.skill-radar。"""
+    os.makedirs(os.path.dirname(SNAPSHOTS_NAME), exist_ok=True)
+    json.dump(data, open(SNAPSHOTS_NAME, "w", encoding="utf-8"),
+              ensure_ascii=False, indent=1)
+
+def snapshot_dir(root, status, score):
+    """对单个技能目录做漂移基线快照：collect_text_files 收集文本，逐文件
+    SHA-256（utf-8 errors=replace 编码后哈希）。
+
+    与 run_engine 的 _file_hashes（原始字节，blocklist IOC 用）语义**刻意不同**：
+    这里是漂移基线，只需对同一 collect_text_files 文本口径可复现比对，
+    不要求与 blocklist 的字节级哈希一致；二进制（空字节嗅探排除）与
+    >2MB 超限文件不进入基线。
+
+    快照存储文件自身（SNAPSHOTS_NAME）不入基线：存储落在被扫目录之下时，
+    每次保存都会改写其内容，若入基线则每次比对必把存储自身报为 changed
+    （自引用漂移）。按绝对路径精确排除，不影响恰好同名的其他文件。"""
+    from datetime import datetime
+    store = os.path.abspath(SNAPSHOTS_NAME)
+    files = [(rel, t) for rel, t in collect_text_files(root)
+             if os.path.abspath(os.path.join(root, rel)) != store]
+    return {"name": os.path.basename(os.path.normpath(root)), "status": status,
+            "score": score, "scanned_at": datetime.now().isoformat(timespec="seconds"),
+            "hashes": {rel: hashlib.sha256(t.encode("utf-8", errors="replace")).hexdigest()
+                       for rel, t in files}}
+
+def diff_snapshot(old, new):
+    """两份 hashes（relpath → sha256）比对：added/removed/changed 各为排序 relpath 列表。
+
+    changed = 双方都有但哈希不同。"""
+    old_k, new_k = set(old), set(new)
+    return {"added": sorted(new_k - old_k), "removed": sorted(old_k - new_k),
+            "changed": sorted(k for k in old_k & new_k if old[k] != new[k])}
+
 if __name__ == "__main__":
     sys.exit(main())
