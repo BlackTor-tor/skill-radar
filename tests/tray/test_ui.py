@@ -37,8 +37,8 @@ def test_four_screens_present():
 def test_anti_patterns_absent():
     html = _read()
     assert "backdrop-filter" not in html        # 无玻璃拟态
-    assert "background-clip: text" not in html.lower().replace(" ", "") \
-        or "text-fill-color" not in html        # 无渐变文字
+    assert "background-clip:text" not in html.lower().replace(" ", "")   # 无渐变文字
+    assert "text-fill-color" not in html.lower().replace(" ", "")        # 无渐变文字
     assert "linear-gradient" not in html        # 无渐变
     assert "@keyframes" not in html or "prefers-reduced-motion" in html
 
