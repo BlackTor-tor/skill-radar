@@ -134,18 +134,23 @@ def cmd_add(argv):
             sg._force_rmtree(tmp)
         return run_install(rest)
 
-    print(sg.render_report(rep))
-    verdict, _color, reason = sr.install_verdict(rep, "scanned")
-    print(f"安装建议: {verdict} —— {sg._sanitize(reason)}")
-    if tmp is not None:
-        sg._force_rmtree(tmp)
+    # I-3：渲染/判定段包 try/finally——print 在管道 head（BrokenPipeError）或
+    # Ctrl+C（KeyboardInterrupt）下抛出时也必须清理临时克隆目录（对齐 scan 分支
+    # 的既有形态）；异常原样穿透，不被 fail-open 的 except Exception 吞掉。
+    try:
+        print(sg.render_report(rep))
+        verdict, _color, reason = sr.install_verdict(rep, "scanned")
+        print(f"安装建议: {verdict} —— {sg._sanitize(reason)}")
 
-    if verdict == "不推荐":
-        if mode == "block":
-            print("[skill-radar] 拦截模式（--block）：拒绝安装，不转调 skills CLI。",
-                  file=sys.stderr)
-            return 1
-        print("[skill-radar] 警告模式：按建议继续安装（--block 可拦截此安装）。")
+        if verdict == "不推荐":
+            if mode == "block":
+                print("[skill-radar] 拦截模式（--block）：拒绝安装，不转调 skills CLI。",
+                      file=sys.stderr)
+                return 1
+            print("[skill-radar] 警告模式：按建议继续安装（--block 可拦截此安装）。")
+    finally:
+        if tmp is not None:
+            sg._force_rmtree(tmp)
 
     rc = run_install(rest)
     if rc == 0:

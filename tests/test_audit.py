@@ -1,6 +1,9 @@
 # tests/test_audit.py — 任务 5：audit 主流程（基线 / 漂移 / 信任降级）
 # 简报三测为契约原文；后四测补自审要求：三态之 OK 路径、drifted 即 FAIL
 #（无 CRITICAL 也 FAIL——前序裁定）、_is_trusted 子串语义、信任降级的 audit 级集成。
+import os
+
+import skill_guard as sg
 from skill_guard import audit_roots, apply_trust
 
 RULES = "- id: T\n  category: EXEC\n  severity: HIGH\n  description: d\n  patterns: ['curl [^\\n]*|sh']\n"
@@ -94,3 +97,33 @@ def test_drift_with_critical_gets_no_correction_note(tmp_path):
     reports = audit_roots([str(tmp_path)], RULES, "- name: a\n  source: t\n", snaps, cfg=_cfg())
     assert any("SR-BLOCK-001" in r for r in reports)   # CRITICAL 在场
     assert not any("由内容漂移引起" in r for r in reports)
+
+
+def test_audit_replaces_normpath_equivalent_orphan_key(tmp_path):
+    """I-2 回归：快照里同技能的旧混合分隔符键（normpath 等价）在写入 normpath
+    新键时必须被清除——否则孤儿键残留，--accept-drift 按名称命中插入序在前的
+    孤儿键时重基线写进孤儿，存活键永远 drifted（audit 持续报 DRIFT、accept
+    清不掉的死循环）。旧键用正斜杠 + 中部双斜杠形态构造：Windows 上与反斜杠
+    normpath 键字符串不等而 normpath 等价（真实回归形态）；POSIX 上 normpath
+    幂等但中部双斜杠仍被折叠（// 前缀才有实现定义语义），两平台都得到
+    「字符串不等、normpath 相等」的孤儿夹具，测试无需按平台分支。"""
+    make_skill(tmp_path, "a")
+    legacy_root = str(tmp_path).replace(os.sep, "/")        # roots 归一化前的正斜杠形态
+    legacy_key = legacy_root + "//a"
+    norm_key = os.path.normpath(os.path.join(str(tmp_path), "a"))
+    assert legacy_key != norm_key and \
+        os.path.normpath(legacy_key) == os.path.normpath(norm_key)   # 夹具自检
+    snaps = {"skills": {legacy_key: {"name": "a", "status": "drifted",
+                                     "score": 10, "scanned_at": "t",
+                                     "hashes": {"SKILL.md": "old"}}}}
+    audit_roots([str(tmp_path)], RULES, "[]", snaps, cfg=_cfg())
+    # 孤儿键被清除，只剩 normpath 形态键且可被后续流程（--show-diff /
+    # --accept-drift 的 _find_skill_entry）按名称寻址——修复前孤儿键插入序在
+    # 前，accept 按名称命中孤儿并把重基线写进孤儿，存活键永远 drifted
+    assert legacy_key not in snaps["skills"]
+    assert list(snaps["skills"].keys()) == [norm_key]
+    key, entry = sg._find_skill_entry(snaps, "a")
+    assert key == norm_key                     # 名称查找唯一指向存活键（无孤儿歧义）
+    # 旧键对 normpath 精确查找不可见 → 本轮按 NEW 重建基线；死循环已断：
+    # 孤儿清除后，后续 --accept-drift 的名称命中唯一指向存活键，重基线即生效
+    assert entry["status"] == "baseline-unreviewed"

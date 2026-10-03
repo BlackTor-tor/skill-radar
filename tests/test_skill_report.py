@@ -103,3 +103,33 @@ def test_cli_html_only_writes_files(tmp_path, monkeypatch, capsys):
     files = list(out.glob("usage-report-*.html"))
     assert len(files) == 1
     assert not list(out.glob("*.png")) or all(p.stat().st_size == 0 for p in out.glob("*.png"))
+
+
+def test_guard_collect_normpath_lookup_hits_drifted_key(tmp_path):
+    """I-1 回归：audit_roots 写的快照键是 normpath 形态（Windows 反斜杠），
+    _guard_collect 以 cfg roots 的正斜杠原始形态调用时，join 出的路径必须经
+    normpath 归一才能命中快照键——否则 render_guard_html 裸查表落空，已漂移
+    技能降级显示 rescanned、install_verdict 失去漂移输入。显式用 Windows 混合
+    形态（快照键 C:\\pool\\demo、root 传 C:/pool）：normpath 在任何平台都把
+    C:/pool/demo 归一成 C:\\pool\\demo，与键相等，pytest 跨平台可验证。
+
+    目录本体用 tmp_path 实存（os.listdir/isdir 需要），快照键按 normpath(tmp)
+    构造——Windows 上即反斜杠形态，POSIX 上 normpath 幂等（正斜杠），两种
+    平台都走「root 正斜杠原始形态 vs 键 normpath 形态」的失配-归一路径。"""
+    import skill_guard
+    pool = tmp_path / "pool" / "demo"
+    pool.mkdir(parents=True)
+    (pool / "SKILL.md").write_text("# demo", encoding="utf-8")
+    # 快照键 = normpath 形态（audit_roots 的口径）；root 传原始正斜杠形态
+    key = os.path.normpath(str(tmp_path / "pool" / "demo"))
+    forward_root = str(tmp_path / "pool").replace(os.sep, "/")
+    snaps = {"skills": {key: {"name": "demo", "status": "drifted",
+                              "score": 40, "scanned_at": "t", "hashes": {}}}}
+    cfg = {"roots": [{"path": forward_root}]}
+    info = sr._guard_collect(cfg, "", "")   # 空规则集：parse_rules("") → []（"[]" 不在子集内）
+    assert [name for name, _, _ in info] == ["demo"]
+    html = sr.render_guard_html(info, snaps)
+    # 命中 drifted 键：状态徽章与 install_verdict 的「不推荐」都在场
+    # （失配时 st 回落 "rescanned"，verdict 按无 CRITICAL/无 HIGH 的干净报告走「推荐」）
+    assert "drifted" in html and "rescanned" not in html
+    assert "不推荐" in html

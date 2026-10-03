@@ -907,6 +907,12 @@ def audit_roots(roots, rules_text, blocklist_text, snapshots, cfg, max_depth=5):
                         new["prev_hashes"] = old["prev_hashes"]
                     head = f"OK        {entry}  score={rep.score}"
             rep.ok = rep.ok and new["status"] != "drifted"
+            # 写键前清理 normpath 等价的旧键（I-2）：roots 归一化前留下的混合分隔符
+            # 键若不删会成为孤儿——--accept-drift 按名称命中插入序在前的孤儿键时，
+            # 重基线写进孤儿，存活键永远 drifted（audit 持续报 DRIFT、accept 清不掉）。
+            for k in [k for k in snapshots["skills"]
+                      if k != skill and os.path.normpath(k) == os.path.normpath(skill)]:
+                del snapshots["skills"][k]
             snapshots["skills"][skill] = new
             rep.skill_name = entry; rep.root = skill
             block = _sanitize(head) + "\n" + render_report(rep)

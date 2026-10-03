@@ -205,6 +205,36 @@ def test_run_install_missing_npx(tmp_path, monkeypatch):
     assert skill_add.run_install(["a/b"]) == 127
 
 
+def test_cmd_add_broken_pipe_still_cleans_tmp(tmp_path, monkeypatch):
+    """I-3 回归：渲染/判定段在 try/finally 之内——print 抛 BrokenPipeError
+    （管道 head 截断）或 KeyboardInterrupt（Ctrl+C）时临时克隆目录仍被清理，
+    异常原样穿透（不被 fail-open 的 except Exception 吞掉）。mkdtemp spy 只盯
+    本轮新建目录（不扫全局 %TEMP%，避免并发进程残留假红）。"""
+    _redirect_home(tmp_path, monkeypatch)
+    src = tmp_path / "pipe-skill.git"; src.mkdir()
+    open(os.path.join(src, "SKILL.md"), "w", encoding="utf-8").write("# clean")
+    _git(src, "init")
+    _git(src, "-c", "user.name=t", "-c", "user.email=t@e.com",
+         "-c", "commit.gpgsign=false", "add", "-A")
+    _git(src, "-c", "user.name=t", "-c", "user.email=t@e.com",
+         "-c", "commit.gpgsign=false", "commit", "-m", "init")
+    calls = _stub_install(monkeypatch)
+    import tempfile
+    real_mkdtemp = tempfile.mkdtemp
+    created = []
+    def spy_mkdtemp(*a, **kw):
+        d = real_mkdtemp(*a, **kw)
+        created.append(d)
+        return d
+    monkeypatch.setattr(tempfile, "mkdtemp", spy_mkdtemp)
+    monkeypatch.setattr(skill_add.sg, "render_report",
+                        lambda rep: (_ for _ in ()).throw(BrokenPipeError()))
+    with pytest.raises(BrokenPipeError):
+        skill_add.cmd_add([str(src)])
+    assert calls == []                       # 异常在转调安装之前抛出
+    assert created and not any(os.path.exists(d) for d in created)
+
+
 def test_baseline_new_skills_snapshots_and_counts(tmp_path, monkeypatch, capsys):
     _redirect_home(tmp_path, monkeypatch)
     pool = tmp_path / "home/.agents/skills/fresh"
