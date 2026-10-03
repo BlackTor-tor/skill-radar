@@ -98,10 +98,12 @@ python skill_report.py --out DIR        # custom output directory
 - **Usage report**: total invocations, active skills, per-layer distribution
   (zcode/claude/marker/atime), top-skills bar chart, full per-skill table.
 - **Security report**: skills scanned, findings by severity (CRITICAL → INFO),
-  status distribution (drifted / baseline-unreviewed / scanned), top-30 skills
-  by risk score with the top finding per skill. Default mode **rescans** all
+  status distribution, and a **top-30 risk table with an install-advice verdict
+  per skill** (推荐 install / 谨慎 evaluate / 不推荐 reject, each with a plain
+  Chinese reason — CRITICAL findings or drift → reject; HIGH/MEDIUM → evaluate
+  with the reason spelled out; clean → recommend). Default mode **rescans** all
   registered roots for full findings detail; `--fast` renders from the last
-  `audit` baselines.
+  `audit` baselines. All headings and labels are bilingual (EN · 中文).
 
 ## Usage patterns
 
@@ -250,8 +252,11 @@ Edge/Chrome 无头截图导出（不加依赖，中文走系统字体）：
 
 - **用量报告**：总调用、活跃技能、四层来源分布、Top 技能条形图、全量明细表
 - **安全报告**：扫描技能数、按严重度分布（CRITICAL→INFO）、状态分布、
-  风险分 Top 30 及每技能首要发现。默认**重扫**全部注册根以获得完整发现明细；
-  `--fast` 直接用上次 audit 的基线分数（秒出）
+  **风险分 Top 30 及每技能安装建议**（推荐安装 / 谨慎评估 / 不推荐——
+  CRITICAL 发现或内容漂移 → 不推荐；HIGH/MEDIUM → 谨慎并附中文理由；
+  无命中 → 推荐；另有三色汇总徽章）。默认**重扫**全部注册根以获得完整
+  发现明细；`--fast` 直接用上次 audit 的基线分数（秒出）。
+  所有标题与标签均为中英双语（EN · 中文）
 
 常用：`python skill_report.py`（全出）、`--fast`、`--html-only`、`--out DIR`。
 

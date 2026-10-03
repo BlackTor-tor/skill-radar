@@ -45,6 +45,30 @@ SEV_COLOR = {"CRITICAL": "#dc2626", "HIGH": "#ea580c", "MEDIUM": "#ca8a04",
              "LOW": "#2563eb", "INFO": "#64748b"}
 STATUS_COLOR = {"drifted": "#dc2626", "scanned": "#059669",
                 "baseline-unreviewed": "#ca8a04", "unscanned": "#64748b"}
+CAT_CN = {"THEFT": "凭证窃取", "EXEC": "恶意执行", "PERSIST": "持久化",
+          "EXFIL": "数据外发", "INJ": "提示注入", "ABUSE": "配置滥用",
+          "DECEP": "话术欺骗", "SUPPLY": "来源伪装", "OBFUS": "内容混淆",
+          "BLOCK": "黑名单命中"}
+
+
+def install_verdict(rep, status):
+    """按发现构成给出安装建议（推荐/谨慎/不推荐）与中文理由。"""
+    crit = [f for f in rep.findings if f.severity == "CRITICAL"]
+    high = [f for f in rep.findings if f.severity == "HIGH"]
+    med = [f for f in rep.findings if f.severity == "MEDIUM"]
+    def cats(fs):
+        return "、".join(sorted({CAT_CN.get(f.category, f.category) for f in fs}))
+    if status == "drifted":
+        return "不推荐", "#dc2626", "内容已偏离安全基线（疑似篡改或未审查的更新），需先 --show-diff 人工审查"
+    if crit:
+        return "不推荐", "#dc2626", f"存在 CRITICAL 级发现：{cats(crit)}；安装前必须逐条人工审查"
+    if rep.score >= 40:
+        return "不推荐", "#dc2626", f"综合风险分 {rep.score}/100 过高（{cats(high or med)}）"
+    if high:
+        return "谨慎", "#ea580c", f"存在 {len(high)} 条 HIGH 级发现（{cats(high)}），多为运维/脚本类技能的正常形态，建议过目后再装"
+    if med:
+        return "谨慎", "#ca8a04", f"存在 {len(med)} 条 MEDIUM 级发现（{cats(med)}），影响有限"
+    return "推荐", "#059669", "未命中任何风险规则"
 PAGE_W = 1440
 BROWSERS = ["msedge", "chrome", "chromium", "google-chrome", "chrome.exe", "msedge.exe"]
 BROWSER_PATHS = [
@@ -133,7 +157,7 @@ def _page(title, meta_lines, body):
 <header><h1><span class="logo">skill-radar</span>{html.escape(title)}</h1>
 <div class="meta">{meta}</div></header>
 {body}
-<footer>skill-radar · deterministic offline reporting · generated {html.escape(datetime.now().strftime('%Y-%m-%d %H:%M'))}</footer>
+<footer>skill-radar · 确定性离线报告 deterministic offline reporting · {html.escape(datetime.now().strftime('%Y-%m-%d %H:%M'))}</footer>
 </body></html>"""
 
 
@@ -174,19 +198,20 @@ def render_usage_html(data, top=25):
     cc = sum(s["claude"] for _, _, s in rows)
     mk = sum(s["marker"] for _, _, s in rows)
     at = sum(s.get("atime", 0) for _, _, s in rows)
-    meta = [f"generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-            f"skills tracked: {len(rows)}"]
-    body = _cards([(invocations, "total invocations"), (active, "active skills"),
-                   (len(rows), "skills tracked"), (mk, "marker session hits"),
-                   (at, "atime reads")])
-    body += "<h2>top skills by usage</h2>"
+    meta = [f"generated 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            f"skills tracked 追踪技能: {len(rows)}"]
+    body = _cards([(invocations, "total invocations · 总调用"), (active, "active skills · 活跃技能"),
+                   (len(rows), "skills tracked · 追踪技能"), (mk, "marker session hits · 会话命中"),
+                   (at, "atime reads · atime 读取")])
+    body += "<h2>TOP SKILLS BY USAGE · 技能调用排行</h2>"
     mx = rows[0][0] if rows and rows[0][0] else 1
     body += _bars([(n, t, mx) for t, n, _ in rows[:top]], "#0f172a")
-    body += "<h2>layer distribution</h2>"
-    body += _cards([(zc, "zcode precise"), (cc, "claude precise"),
-                    (mk, "marker universal"), (at, "atime fallback")])
-    body += "<h2>all skills</h2><table><tr><th>skill</th><th>zcode</th><th>claude</th>" \
-            "<th>sessions</th><th>atime</th><th>total</th><th>last used</th></tr>"
+    body += "<h2>LAYER DISTRIBUTION · 四层来源分布</h2>"
+    body += _cards([(zc, "zcode precise · zcode 精确层"), (cc, "claude precise · claude 精确层"),
+                    (mk, "marker universal · 标记通用层"), (at, "atime fallback · atime 兜底层")])
+    body += ('<h2>ALL SKILLS · 全部技能明细</h2><table><tr><th>skill 技能</th><th>zcode</th>'
+             '<th>claude</th><th>sessions 会话</th><th>atime</th><th>total 合计</th>'
+             '<th>last used 最近使用</th></tr>')
     for t, n, s in rows[:top * 2] if top < 40 else rows:
         last = (s.get("last_tool_use") or "")[:10] or "—"
         body += (f"<tr><td>{html.escape(n)}</td><td>{s['zcode']}</td><td>{s['claude']}</td>"
@@ -202,7 +227,8 @@ def _guard_collect(cfg, rules_text, blocklist_text, max_depth=5):
     会在多个 root 下重复出现，报告只保留一份。"""
     import hashlib
     out = []
-    seen = set()
+    seen = {}
+    seen_names = {}
     rules = sg.parse_rules(rules_text)
     for r in cfg.get("roots", []):
         root = r.get("path", "")
@@ -216,7 +242,7 @@ def _guard_collect(cfg, rules_text, blocklist_text, max_depth=5):
             real = os.path.realpath(skill).lower()
             if real in seen:
                 continue
-            seen.add(real)
+            seen[real] = True
             rep = sg.run_engine(skill, rules, blocklist_text, max_depth=max_depth)
             rep.findings = sg.apply_trust(rep.findings, trusted_root)
             rep.score = sg.score_findings(rep.findings)
@@ -230,6 +256,15 @@ def _guard_collect(cfg, rules_text, blocklist_text, max_depth=5):
                 except OSError:
                     pass
             rep.skill_name = entry
+            # 同名技能去重：不同 agent 目录常有真实内容副本，报告保留风险分最高的实例
+            prior = seen_names.get(entry)
+            if prior is not None:
+                _, _, prev_rep = out[prior]
+                if rep.score <= prev_rep.score:
+                    continue
+                out[prior] = (entry, skill, rep)
+                continue
+            seen_names[entry] = len(out)
             out.append((entry, skill, rep))
     return out
 
@@ -245,25 +280,36 @@ def render_guard_html(skills_info, snapshots, top=30):
         status_count = {"rescanned": len(skills_info)}
     crit_skills = sum(1 for _, _, rep in skills_info
                       if any(f.severity == "CRITICAL" for f in rep.findings))
-    meta = [f"generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-            f"skills scanned: {len(skills_info) if skills_info else sum(status_count.values())}",
-            "mode: " + ("detailed rescan" if skills_info else "fast (snapshot scores)")]
-    body = _cards([(sum(status_count.values()), "skills"),
-                   (sev_count["CRITICAL"], "critical findings"),
-                   (sev_count["HIGH"], "high findings"),
-                   (status_count.get("drifted", 0), "drifted"),
-                   (status_count.get("baseline-unreviewed", 0), "baseline-unreviewed")])
-    body += "<h2>findings by severity</h2>"
+    meta = [f"generated 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            f"skills scanned 扫描技能: {len(skills_info) if skills_info else sum(status_count.values())}",
+            "mode 模式: " + ("detailed rescan 详细重扫" if skills_info else "fast 快照模式")]
+    body = _cards([(sum(status_count.values()), "skills · 技能"),
+                   (sev_count["CRITICAL"], "critical findings · CRITICAL 发现"),
+                   (sev_count["HIGH"], "high findings · HIGH 发现"),
+                   (status_count.get("drifted", 0), "drifted · 已漂移"),
+                   (status_count.get("baseline-unreviewed", 0), "baseline-unreviewed · 基线未审查")])
+    body += "<h2>FINDINGS BY SEVERITY · 发现按严重度</h2>"
     mx = max(sev_count.values()) if any(sev_count.values()) else 1
-    colors = {"CRITICAL": "#dc2626", "HIGH": "#ea580c", "MEDIUM": "#ca8a04",
-              "LOW": "#2563eb", "INFO": "#64748b"}
     body += _bars([(s, sev_count[s], mx) for s in SEV_ORDER if sev_count[s]],
                   "#dc2626") if any(sev_count.values()) else '<p class="muted">（无发现）</p>'
-    body += "<h2>status distribution</h2>"
+    body += "<h2>STATUS DISTRIBUTION · 状态分布</h2>"
     body += _bars([(k, v, max(status_count.values())) for k, v in
                    sorted(status_count.items(), key=lambda x: -x[1])], "#334155")
-    body += "<h2>top skills by risk score</h2><table><tr><th>skill</th><th>score</th>" \
-            "<th>status</th><th>findings (C/H/M/L)</th><th>top finding</th></tr>"
+    verdicts = {}
+    for name, path, rep in skills_info:
+        st = (snapshots.get("skills", {}).get(path, {}) or {}).get("status", "rescanned")
+        v, _, _ = install_verdict(rep, st)
+        verdicts[v] = verdicts.get(v, 0) + 1
+    body += "<h2>INSTALL ADVICE · 安装建议汇总</h2><p>"
+    body += (_badge(f"推荐安装 {verdicts.get('推荐', 0)}", "#059669") + "  " +
+             _badge(f"谨慎评估 {verdicts.get('谨慎', 0)}", "#ca8a04") + "  " +
+             _badge(f"不推荐 {verdicts.get('不推荐', 0)}", "#dc2626") +
+             '</p><p class="muted">判定依据：CRITICAL 发现或内容漂移 → 不推荐；HIGH/MEDIUM 发现 → 谨慎（多为运维技能的正常形态，附理由逐条判断）；'
+             '无命中 → 推荐。基线未经人工审查的技能会附加提醒。</p>')
+    body += "<h2>TOP SKILLS BY RISK SCORE · 风险分排行与安装建议</h2><table>" \
+            "<tr><th>skill 技能</th><th>score 风险分</th><th>status 状态</th>" \
+            "<th>findings 发现 (C/H/M/L)</th><th>install advice 安装建议</th>" \
+            "<th>top finding 首要发现</th></tr>"
     ranked = sorted(skills_info, key=lambda x: -x[2].score)[:top]
     for name, path, rep in ranked:
         c = {s: sum(1 for f in rep.findings if f.severity == s) for s in SEV_ORDER}
@@ -271,11 +317,13 @@ def render_guard_html(skills_info, snapshots, top=30):
                        SEV_COLOR["HIGH"] if rep.score >= 25 else
                        SEV_COLOR["MEDIUM"] if rep.score >= 10 else "#64748b")
         st = (snapshots.get("skills", {}).get(path, {}) or {}).get("status", "rescanned")
+        v, vcolor, reason = install_verdict(rep, st)
         top_f = max(rep.findings, key=lambda f: SEV_ORDER.index(f.severity)) if rep.findings else None
         snippet = sg._sanitize(f"{top_f.rule_id} {top_f.file}:{top_f.line} {top_f.excerpt}")[:90] if top_f else "—"
         body += (f"<tr><td>{html.escape(name)}</td><td>{badge}</td>"
                  f"<td>{_badge(st, STATUS_COLOR.get(st, '#64748b'))}</td>"
                  f"<td>{c['CRITICAL']}/{c['HIGH']}/{c['MEDIUM']}/{c['LOW']}</td>"
+                 f"<td>{_badge(v, vcolor)}<br><span class='muted'>{html.escape(sg._sanitize(reason))}</span></td>"
                  f"<td class='muted'>{html.escape(snippet)}</td></tr>")
     body += "</table>"
     if skills_info:

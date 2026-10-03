@@ -31,11 +31,34 @@ def test_render_usage_html_contains_layers_and_names():
     assert "alpha" in html and "beta" in html
     assert "total invocations" in html and ">4<" in html   # 3+1+0
     assert "zcode precise" in html and "marker universal" in html
+    assert "技能调用排行" in html and "四层来源分布" in html   # 双语标题
+
+
+def test_install_verdict_logic():
+    from skill_guard import Finding, ScanReport
+    clean = ScanReport("a", "/a", [], 0, 1, True)
+    assert sr.install_verdict(clean, "scanned")[0] == "推荐"
+    crit = ScanReport("b", "/b", [Finding("X", "EXFIL", "CRITICAL", "s", 1, "e", "m", [])], 40, 1, False)
+    v, _, reason = sr.install_verdict(crit, "scanned")
+    assert v == "不推荐" and "数据外发" in reason
+    high = ScanReport("c", "/c", [Finding("Y", "EXEC", "HIGH", "s", 1, "e", "m", [])], 25, 1, True)
+    v, _, reason = sr.install_verdict(high, "scanned")
+    assert v == "谨慎" and "恶意执行" in reason
+    drift = ScanReport("d", "/d", [], 0, 1, True)
+    assert sr.install_verdict(drift, "drifted")[0] == "不推荐"
+
+
+def test_render_guard_html_has_advice_column_and_verdict_summary():
+    snaps = {"skills": {"/p/demo": {"name": "demo", "status": "baseline-unreviewed",
+                                    "score": 25, "scanned_at": "t", "hashes": {}}}}
+    html = sr.render_guard_html([("demo", "/p/demo", _fake_rep())], snaps)
+    assert "安装建议" in html and "推荐安装" in html and "不推荐" in html
+    assert "INSTALL ADVICE · 安装建议汇总" in html
 
 
 def test_render_usage_html_empty_is_safe():
     html = sr.render_usage_html({"skills": {}})
-    assert "skills tracked: 0" in html and "（无记录）" in html
+    assert "追踪技能: 0" in html and "（无记录）" in html
 
 
 def test_render_guard_html_detailed_mode():
@@ -52,7 +75,7 @@ def test_render_guard_html_fast_mode_from_snapshots():
         "/p/a": {"name": "a", "status": "drifted", "score": 100, "hashes": {}},
         "/p/b": {"name": "b", "status": "scanned", "score": 0, "hashes": {}}}}
     html = sr.render_guard_html([], snaps)
-    assert "fast (snapshot scores)" in html
+    assert "快照模式" in html
     assert "drifted" in html and "scanned" in html
 
 
