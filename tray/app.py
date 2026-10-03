@@ -1,5 +1,6 @@
 # tray/app.py — SkillRadar Tray 入口：线程模型（设计裁定 1）+ pystray 托盘 +
 # pywebview 窗口 + js_bridge。关窗 = 缩托盘（hide），托盘菜单退出才真退出。
+import concurrent.futures
 import contextlib
 import io
 import os
@@ -7,6 +8,8 @@ import subprocess
 import sys
 import threading
 import types
+
+GUARD_TIMEOUT_S = 300   # 壳层守卫动作预算（对齐原 subprocess timeout=300）
 
 
 def _res_base():
@@ -97,18 +100,36 @@ class JsBridge:
         # skill_guard.py——show_diff/accept_drift 会重启托盘而非执行命令（D-1
         # 同源接缝）。sg.main 的 stdout reconfigure 自带 try/except，
         # 对 redirect 的 StringIO 桩安全。
+        # 超时保护：ThreadPoolExecutor(1) + result(timeout)。已知限制（注释
+        # 固化不修）：redirect_stdout/stderr 是进程级全局态，超时后滞留的
+        # 工作线程若继续输出会串流到壳层 stdout——守卫子命令均为有界扫描，
+        # GUARD_TIMEOUT_S 预算内必然退出；executor 线程非 daemon，极端挂死
+        # 会拖住进程退出（与 subprocess 形态的 kill 缺口同量级，可接受）。
         buf_out, buf_err = io.StringIO(), io.StringIO()
+
+        def _invoke():
+            rc_local = None
+            try:
+                with contextlib.redirect_stdout(buf_out), \
+                        contextlib.redirect_stderr(buf_err):
+                    rc_local = sg.main(args)
+            except SystemExit as e:   # argparse / sg 显式 exit 口径
+                rc_local = e.code
+                if not isinstance(rc_local, int) and rc_local:
+                    buf_err.write(str(rc_local))   # 带消息的 SystemExit → 进 output
+            except Exception as e:
+                rc_local = 1
+                buf_err.write(str(e))
+            return rc_local
+
+        ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
-            with contextlib.redirect_stdout(buf_out), \
-                    contextlib.redirect_stderr(buf_err):
-                rc = sg.main(args)
-        except SystemExit as e:   # argparse / sg 显式 exit 口径：不炸壳层
-            rc = e.code
-            if not isinstance(rc, int) and rc:
-                buf_err.write(str(rc))   # 带消息的 SystemExit → 进 output
-        except Exception as e:
-            rc = 1
-            buf_err.write(str(e))
+            rc = ex.submit(_invoke).result(timeout=GUARD_TIMEOUT_S)
+        except concurrent.futures.TimeoutError:
+            ex.shutdown(wait=False)   # 不能 wait：会阻塞到卡死调用结束
+            return {"error": "guard action timed out"}
+        finally:
+            ex.shutdown(wait=False)
         return {"ok": rc == 0,
                 "output": (buf_out.getvalue() + buf_err.getvalue())[-4000:]}
 

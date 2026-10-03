@@ -1,4 +1,9 @@
 # tray/daemon.py — 守护核心：脏根 debounce、变更技能定位、增量扫描、结果分发
+# frozen 安全注记（D-1 轮审查固化）：本模块是**被 import 的库模块**，__file__
+# 由 import 机制解析为 _MEIPASS/tray/daemon.py（frozen）或源码路径（dev），
+# 二层 dirname 在两种形态下都得到正确的资源基目录——与入口脚本 app.py 不同
+# （入口 __file__ 在 frozen 下落 _MEIPASS 根，需 _res_base 的 _MEIPASS 分支）。
+# 改动本模块资源定位前先回看该差异，勿套用入口脚本的修法。
 import os
 import threading
 import time

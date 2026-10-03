@@ -202,3 +202,18 @@ def test_run_guard_in_process(monkeypatch):
     r4 = app_mod.JsBridge._run_guard(["audit"])
     assert r4["ok"] is False
     assert "kaboom" in r4["output"]
+
+
+def test_run_guard_timeout(monkeypatch):
+    # 超时保护：卡死的守卫动作在 GUARD_TIMEOUT_S 内返回 error，不挂壳层。
+    import time
+    import tray.app as app_mod
+    monkeypatch.setattr(app_mod, "GUARD_TIMEOUT_S", 0.05)
+
+    def slow(args):
+        time.sleep(0.5)
+        return 0
+
+    monkeypatch.setattr(app_mod.sg, "main", slow)
+    r = app_mod.JsBridge._run_guard(["audit"])
+    assert r == {"error": "guard action timed out"}
