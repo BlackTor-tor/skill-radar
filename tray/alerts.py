@@ -13,6 +13,40 @@ def _qdir():
     return os.path.join(sg.GUARD_DIR, "quarantine")
 
 
+def _ps_quote(s):
+    # PowerShell 单引号字符串内的单引号转义为两个单引号（防注入；s 已过 _sanitize）
+    return "'" + s.replace("'", "''") + "'"
+
+
+def _win_toast_ps(t, m):
+    """完整可用的 WinRT toast 脚本（无 burntToast 依赖）。四要素：
+    WinRT 类型加载、XmlDocument+LoadXml 装载含 t/m 的 XML、
+    ToastNotification::new、CreateToastNotifier('SkillRadarTray').Show。
+    整段 XML 作为一个 PowerShell 单引号字符串传入——XML 内出现的所有单引号
+    （含 t/m 携带的）统一双写转义，既防注入也防提前闭合字符串。"""
+    xml = (
+        "<toast><visual><binding template=\"ToastGeneric\">"
+        f"<text id=\"1\">{t}</text>"
+        f"<text id=\"2\">{m}</text>"
+        "</binding></visual></toast>"
+    )
+    return (
+        "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications,"
+        " ContentType = WindowsRuntime] | Out-Null;"
+        "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument,"
+        " ContentType = WindowsRuntime] | Out-Null;"
+        f"$x = New-Object Windows.Data.Xml.Dom.XmlDocument; $x.LoadXml({_ps_quote(xml)});"
+        "$toast = [Windows.UI.Notifications.ToastNotification]::new($x);"
+        "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("
+        "'SkillRadarTray').Show($toast)"
+    )
+
+
+def _applescript_quote(s):
+    # AppleScript 字符串转义：反斜杠与双引号都要转义
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def toast(title, msg, _capture=False):
     """跨平台 Toast：Windows 走 PowerShell WinRT 兼容层，macOS 走 osascript；
     失败静默（调用方有托盘徽标兜底）。文案过 _sanitize（规格 §5）。
@@ -23,18 +57,13 @@ def toast(title, msg, _capture=False):
         return t + m
     try:
         if sys.platform == "win32":
-            ps = ("[Windows.UI.Notifications.ToastNotificationManager, Windows.UI."
-                  "Notifications, ContentType = WindowsRuntime] | Out-Null;"
-                  "$t=[Windows.UI.Notifications.ToastNotificationManager]::"
-                  "GetTemplateContent(1);"
-                  "$x=[Windows.UI.Notifications.ToastNotificationManager]::"
-                  "GetText($t.ContentXml, 'text', 1);"
-                  "echo done")
-            subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+            subprocess.run(["powershell", "-NoProfile", "-Command",
+                            _win_toast_ps(t, m)],
                            timeout=10, capture_output=True)
         elif sys.platform == "darwin":
             subprocess.run(["osascript", "-e",
-                            f'display notification "{m}" with title "{t}"'],
+                            f'display notification "{_applescript_quote(m)}"'
+                            f' with title "{_applescript_quote(t)}"'],
                            timeout=10, capture_output=True)
     except (OSError, subprocess.SubprocessError):
         pass
@@ -42,7 +71,8 @@ def toast(title, msg, _capture=False):
 
 
 def restore_command(dest, original):
-    return f'move "{dest}" "{original}"   # Windows（macOS: mv "{dest}" "{original}"）'
+    # 纯命令行（cmd.exe 可直接粘贴执行）；macOS 形态见 RESTORE.txt 内说明
+    return f'move "{dest}" "{original}"'
 
 
 def quarantine_skill(skill_path, allowed_roots):
@@ -65,6 +95,11 @@ def quarantine_skill(skill_path, allowed_roots):
         return None
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     dest = os.path.join(_qdir(), f"{name}-{ts}")
+    # 同名技能同秒二次隔离：追加 -2、-3… 直到不冲突（防嵌套进已存在 dest）
+    n = 2
+    while os.path.exists(dest):
+        dest = os.path.join(_qdir(), f"{name}-{ts}-{n}")
+        n += 1
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     shutil.move(real, dest)
     note = os.path.join(dest, "RESTORE.txt")
@@ -73,5 +108,7 @@ def quarantine_skill(skill_path, allowed_roots):
                 f"原路径: {skill_path}\n"
                 f"隔离时间: {ts}\n"
                 f"恢复方法（确认安全后）: {restore_command(dest, skill_path)}\n"
+                f"（Windows cmd 恢复命令如上；macOS/Linux 请用: "
+                f'mv "{dest}" "{skill_path}"）\n'
                 f"审查建议: python skill_guard.py scan \"{skill_path}\"\n")
     return dest
