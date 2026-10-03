@@ -721,5 +721,94 @@ def gate_consent(cfg, action, yes_flag):
         return cfg
     raise SystemExit(f"[skill-radar] 动作 {action} 未授权：交互确认或在脚本中传 --yes")
 
+# ---------------------------------------------------------------- audit 主流程（基线 / 漂移 / 信任降级）
+
+def apply_trust(findings, trusted):
+    """信任降级（规格 §4 信任链）：trusted 时 HIGH→MEDIUM、MEDIUM→LOW、LOW→INFO
+    各降一级，message 追加 " [trusted, downgraded]"；CRITICAL 永不降级（底线），
+    不在映射中的未知等级原样保留。trusted=False 原样返回同一列表。"""
+    if not trusted: return findings
+    down = {"HIGH": "MEDIUM", "MEDIUM": "LOW", "LOW": "INFO"}
+    return [f if f.severity == "CRITICAL" or f.severity not in down
+            else Finding(f.rule_id, f.category, down[f.severity], f.file, f.line,
+                         f.excerpt, f.message + " [trusted, downgraded]", f.refs)
+            for f in findings]
+
+def _is_trusted(cfg, root):
+    """信任根判定：cfg["trust"]["owners"]/["repos"] 任一子串命中 root 归一路径
+    （反斜杠→正斜杠，大小写敏感）即为信任。第三级内容 hash 信任由 blocklist/IOC
+    侧承接，不在此判定。"""
+    t = cfg.get("trust", {})
+    root_norm = root.replace("\\", "/")
+    return any(o in root_norm for o in t.get("owners", [])) or \
+           any(r in root_norm for r in t.get("repos", []))
+
+def audit_roots(roots, rules_text, blocklist_text, snapshots, cfg, max_depth=5):
+    """audit 主流程（纯函数层；CLI 接入在后续任务）：逐根逐技能 run_engine →
+    apply_trust → 快照比对，返回 summary 字符串列表——**每个技能恰一条**：
+    状态行（NEW/DRIFT/OK 前缀 + 技能名 + score + 状态）+ render_report 块。
+
+    状态机（规格 §4）：快照无此技能 → NEW，建基线 status="baseline-unreviewed"；
+    哈希有变化（added/removed/changed 任一非空）→ DRIFT，status="drifted"；
+    无变化 → 保留原状态 + OK。快照键 = 技能目录路径，值五键齐全；哈希口径用
+    snapshot_dir（文本哈希语义，与 run_engine 的字节级 IOC 哈希刻意不同）。
+    前序裁定：render_report 的「拒绝安装」文案前提是 ok 与 CRITICAL 绑定——
+    audit 侧以 ``rep.ok = rep.ok and new["status"] != "drifted"`` 补全，drifted
+    报告即使无 CRITICAL 也视为 FAIL。
+    规格 §3 共存计数行仅在池内多技能且确有 EXFIL 命中时附加（summary 每技能
+    恰一条是测试契约，空计数行不附加）；§9 联动提示需 cfg["usage_file"] 指向
+    v1 monitor 用量 JSON（缺文件/坏 JSON 静默跳过，浅耦合）。"""
+    from datetime import datetime
+    rules = parse_rules(rules_text)
+    summary = []
+    last_findings = {}   # 技能路径 → 本次 audit 的 findings（供 §3 共存计数，调用结束即弃）
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        trusted = _is_trusted(cfg, root)
+        for entry in sorted(os.listdir(root)):
+            skill = os.path.join(root, entry)
+            if not _is_skill_dir(skill):
+                continue
+            rep = run_engine(skill, rules, blocklist_text, max_depth=max_depth)
+            rep.findings = apply_trust(rep.findings, trusted)
+            last_findings[skill] = rep.findings
+            new = {"name": entry, "status": "baseline-unreviewed", "score": rep.score,
+                   "scanned_at": datetime.now().isoformat(timespec="seconds"),
+                   "hashes": snapshot_dir(skill, "x", rep.score)["hashes"]}
+            old = snapshots["skills"].get(skill)
+            if old is None:
+                head = f"NEW       {entry}  score={rep.score}  → baseline-unreviewed"
+            else:
+                d = diff_snapshot(old["hashes"], new["hashes"])
+                if d["added"] or d["removed"] or d["changed"]:
+                    new["status"] = "drifted"
+                    head = (f"DRIFT     {entry}  +{len(d['added'])} -{len(d['removed'])} ~{len(d['changed'])}"
+                            f"（用 --show-diff {entry} 查看）")
+                else:
+                    new["status"] = old["status"]   # 未变化，保留原状态
+                    head = f"OK        {entry}  score={rep.score}"
+            rep.ok = rep.ok and new["status"] != "drifted"
+            snapshots["skills"][skill] = new
+            rep.skill_name = entry; rep.root = skill
+            summary.append(_sanitize(head) + "\n" + render_report(rep))
+    # 规格 §3：报告上下文——共存计数（与网络外发模式工具共存的技能数）
+    netcap = {n for n, s in snapshots["skills"].items()
+              if any(f.category == "EXFIL" for f in last_findings.get(n, []))}
+    if len(snapshots["skills"]) > 1 and netcap:
+        summary.append(_sanitize(f"上下文: 池内 {len(netcap)} 个技能含网络外发模式（跨技能运行时关联在 v3）"))
+    # 规格 §9：与 v1 用量数据联动提示（可选、浅耦合）
+    usage_path = cfg.get("usage_file")
+    if usage_path and os.path.isfile(usage_path):
+        try:
+            usage = json.load(open(usage_path, encoding="utf-8")).get("skills", {})
+            for name, s in snapshots["skills"].items():
+                u = usage.get(s["name"], {})
+                if s["score"] >= 25 and (u.get("zcode", 0) + u.get("claude", 0) + u.get("marker", 0)) == 0:
+                    summary.append(_sanitize(f"联动提示: {s['name']} 风险分 {s['score']} 且从未被使用 → 优先删除候选"))
+        except (OSError, ValueError):
+            pass
+    return summary
+
 if __name__ == "__main__":
     sys.exit(main())
