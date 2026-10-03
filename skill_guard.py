@@ -309,13 +309,18 @@ def is_git_url(t):
     return t.startswith(("http://", "https://", "git@")) or t.endswith(".git")
 
 def resolve_target(target, timeout=120):
-    """本地路径原样返回；git URL 浅克隆到临时目录（调用方负责在扫描后 shutil.rmtree）。"""
+    """本地路径原样返回；git URL 浅克隆到临时目录（调用方负责在扫描后 shutil.rmtree）。
+    clone 失败/超时：就地清理临时目录后原样抛出，不留 %TEMP% 残留。"""
     if not is_git_url(target):
         return target
     base = tempfile.mkdtemp(prefix="skill-radar-scan-")
-    subprocess.run(["git", "clone", "--depth", "1", "-q", target, base],
-                   check=True, timeout=timeout,
-                   env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+    try:
+        subprocess.run(["git", "clone", "--depth", "1", "-q", target, base],
+                       check=True, timeout=timeout,
+                       env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+    except BaseException:
+        _force_rmtree(base)   # 失败的 clone 可能留下只读 .git 对象，须强制删
+        raise
     return base
 
 def _force_rmtree(path):
