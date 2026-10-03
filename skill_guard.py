@@ -71,7 +71,7 @@ CATEGORIES = {"THEFT", "EXEC", "PERSIST", "EXFIL", "INJ", "ABUSE", "DECEP", "SUP
 SEVERITIES = {"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"}
 SEVERITY_WEIGHT = {"CRITICAL": 40, "HIGH": 25, "MEDIUM": 10, "LOW": 3, "INFO": 0}
 EXCLUDED_DIRS = {"node_modules", ".git", "__pycache__", "AppData", "Library",
-                 "site-packages", ".venv", "venv", ".cargo", "target"}
+                 "site-packages", ".venv", "venv", ".cargo", "target", ".pytest_cache"}
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_HASH_FILE_BYTES = 8 * 1024 * 1024   # 单文件哈希上限：超大文件不拖慢引擎（不哈希、不匹配）
 

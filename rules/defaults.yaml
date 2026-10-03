@@ -20,8 +20,9 @@
 # dogfood 自扫描口径（task-10 验收，2026-10-02）：对本仓库根跑 scan --strict
 # 预期大量「文档自命中」，属检测能力的在证（每条 defaults 规则至少在仓库自身
 # 内容上命中一次）而非缺陷——本文件各规则的 patterns 定义行会命中自身正则；
-# tests/ 夹具、docs/ 与 README 示例、.superpowers 过程工件、.pytest_cache 缓存
-# 按设计含有恶意样本文本。逐类判定（真阳性/自命中）见 task-10-report.md；
+# tests/ 夹具、docs/ 与 README 示例、.superpowers 过程工件按设计含有恶意样本
+# 文本（.pytest_cache 属工具自身缓存，已入 skill_guard.EXCLUDED_DIRS，不再入扫）。
+# 逐类判定（真阳性/自命中）见 task-10-report.md；
 # 检测真实技能时应以技能目录为目标，而非本仓库根。file_globs 字段当前仅解析、
 # 引擎不消费，不能用作此类排除。
 - id: SR-THEFT-001
