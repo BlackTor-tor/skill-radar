@@ -468,21 +468,28 @@ def run_engine(root, rules, blocklist_text="[]", max_depth=5, repo=""):
                       ok=not any(f.severity == "CRITICAL" for f in findings))
 
 def main(argv=None):
-    """scan/discover/audit 子命令 CLI。scan/audit 统一返回退出码（scan --strict 且有
+    """scan/discover/audit/add 子命令 CLI。scan/audit 统一返回退出码（scan --strict 且有
     CRITICAL → 1；audit --strict 且 summary 有 DRIFT/NEW 行 → 1），不内部 raise
     SystemExit；用户错误路径除外（与 argparse 口径一致）：discover --deep / audit
     --watch 未授权 consent、audit --show-diff/--accept-drift 的技能不在快照中，
-    均 raise SystemExit。"""
-    import argparse
+    均 raise SystemExit。add 子命令在 argparse 之前整体委托 skill_add.cmd_add
+    ——网关透传参数含任意旗标，argparse REMAINDER 处理不了 `--flag 先于位置参数`
+    的形态。"""
     # 输出口径一次性封死整类问题：_sanitize 只清零宽/C0/U+FFFD，被扫内容的
     # emoji 等 cp936 不可编码字符会原样进入报告，GBK 控制台下 print 仍会
     # UnicodeEncodeError 打崩渲染。入口对 stdout/stderr 统一 errors="replace"
     # （保编码不改——CJK 控制台正常输出，不可编码字符降级 "?"）。
+    # 必须先于 add 委托：cmd_add 的 render_report 输出同受此保护。
     for _stream in (sys.stdout, sys.stderr):
         try:
             _stream.reconfigure(errors="replace")
         except Exception:
             pass   # 非 TextIOWrapper（pytest 捕获桩/已重定向）则不处理
+    args_list = sys.argv[1:] if argv is None else list(argv)
+    if args_list and args_list[0] == "add":
+        import skill_add
+        return skill_add.cmd_add(args_list[1:])
+    import argparse
     ap = argparse.ArgumentParser(prog="skill-radar guard")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p_scan = sub.add_parser("scan")

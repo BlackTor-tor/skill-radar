@@ -149,9 +149,9 @@ def test_cmd_add_critical_block_refuses_no_install(tmp_path, monkeypatch, capsys
     rc = skill_add.cmd_add(["--block", str(src)])
     assert rc == 1                                    # 拒绝且退出码 1（规格 §1a）
     assert calls == []                                # 绝不转调安装
-    out = capsys.readouterr().out
-    assert "拦截模式" not in out or True              # 拦截提示走 stderr
-    assert "不推荐" in out                            # 三分法判定在场
+    captured = capsys.readouterr()
+    assert "不推荐" in captured.out                    # 三分法判定在场
+    assert "拦截模式" in captured.err                  # 拦截提示走 stderr
 
 
 def test_cmd_add_critical_warn_continues(tmp_path, monkeypatch, capsys):
@@ -216,3 +216,38 @@ def test_baseline_new_skills_snapshots_and_counts(tmp_path, monkeypatch, capsys)
     assert str(pool) in snaps["skills"]
     assert snaps["skills"][str(pool)]["status"] == "baseline-unreviewed"
     assert "NEW       fresh" in capsys.readouterr().out
+
+# ------------------------------------------------- 任务 4：CLI 接入（经 skill_guard.main）
+# 恶意夹具注意：skill_guard.main 接管 add 后仍走真实 rules/defaults.yaml，
+# _init_skill_repo 的内容命中 SR-THEFT-001（CRITICAL）——与任务 3 同口径。
+
+def test_main_intercepts_add_and_delegates(tmp_path, monkeypatch):
+    _redirect_home(tmp_path, monkeypatch)
+    src = tmp_path / "cli-skill.git"; src.mkdir()
+    os.makedirs(os.path.join(src, "sub"), exist_ok=True)
+    open(os.path.join(src, "SKILL.md"), "w", encoding="utf-8").write("# x")
+    open(os.path.join(src, "sub/a.txt"), "w", encoding="utf-8").write("ok")
+    _git(src, "init")
+    _git(src, "-c", "user.name=t", "-c", "user.email=t@e.com",
+         "-c", "commit.gpgsign=false", "add", "-A")
+    _git(src, "-c", "user.name=t", "-c", "user.email=t@e.com",
+         "-c", "commit.gpgsign=false", "commit", "-m", "init")
+    calls = _stub_install(monkeypatch)
+    assert skill_guard.main(["add", str(src)]) == 0      # argparse 之前被拦截
+    assert calls == [[str(src)]]
+    # 既有子命令不受影响（回归哨兵）
+    d = tmp_path / "local-skill"; d.mkdir()
+    open(os.path.join(d, "SKILL.md"), "w", encoding="utf-8").write("# clean")
+    assert skill_guard.main(["scan", str(d), "-f", RULES_CLEAN]) == 0
+
+
+def test_main_add_block_end_to_end_fail_closed(tmp_path, monkeypatch, capsys):
+    # 非交互（pytest 下 stdin 非 TTY）+ --block + CRITICAL → fail-closed 拒绝：
+    # 不询问、不安装、退出码 1，consent.add_block 已落盘（与 scan --strict 口径一致）
+    _redirect_home(tmp_path, monkeypatch)
+    src = tmp_path / "evil-cli.git"; src.mkdir()
+    _init_skill_repo(str(src))
+    calls = _stub_install(monkeypatch)
+    assert skill_guard.main(["add", "--block", str(src)]) == 1
+    assert calls == []
+    assert skill_guard.load_config()["consent"]["add_block"] is True

@@ -139,6 +139,23 @@ A typical rhythm: `scan` before every install, `audit --strict` on a weekly
 schedule, `--accept-drift` only after you have eyeballed the diff, and
 `skill_report.py` whenever you want the picture in one image.
 
+### Pre-install gateway: `add` (v2.2)
+
+`python skill_guard.py add [--block] <npx skills add args...>` gates every
+install: it shallow-clones the source, runs the full 3-layer engine, prints the
+report plus the three-way install verdict (推荐/谨慎/不推荐), then delegates to
+`npx skills add` with your original arguments (exit code passed through).
+After a successful install it automatically baselines the new skills (audit
+increment). `--block` (persisted to `consent.add_block` in config.yaml on
+first use) refuses 不推荐-verdict installs with exit code 1 — non-interactive
+and fail-closed, same contract as `scan --strict`. Clone/scan failure fails
+open with a loud warning. One-line accelerator:
+
+    # bash
+    alias skills='python /path/to/skill_guard.py add -- skills'
+    # PowerShell
+    function skills { python F:\path\to\skill_guard.py add -- skills @args }
+
 ## Security Guard details
 
 The guard scans **all** text files inside a skill directory (attached scripts
@@ -273,6 +290,21 @@ Edge/Chrome 无头截图导出（不加依赖，中文走系统字体）：
 
 典型节奏：**装前 scan、每周 audit --strict、accept-drift 只在亲眼看 diff 之后、
 想要一图流就跑 skill_report.py**。
+
+### 装前网关：`add`（v2.2）
+
+`python skill_guard.py add [--block] <npx skills add 的参数...>` 把住每一次
+安装：浅克隆安装源 → 跑完整三层引擎 → 打印报告与三分法安装判定
+（推荐/谨慎/不推荐）→ 携原参数转调 `npx skills add`（退出码透传）。
+安装成功后自动为新技能建基线（audit 增量）。`--block`（首次使用即持久化到
+config.yaml 的 `consent.add_block`）对不推荐判定的安装以退出码 1 拒绝——
+非交互、fail-closed，与 `scan --strict` 同一口径。克隆/扫描失败则高声告警、
+fail-open 放行。一行加速器：
+
+    # bash
+    alias skills='python /path/to/skill_guard.py add -- skills'
+    # PowerShell
+    function skills { python F:\path\to\skill_guard.py add -- skills @args }
 
 ### 安全闸门细节
 
