@@ -70,3 +70,27 @@ def test_trusted_root_downgrades_high_findings(tmp_path):
     joined = "\n".join(reports)
     assert "MEDIUM" in joined and "HIGH" not in joined
     assert "[trusted, downgraded]" in joined
+    # 发现 1 钉死：信任降级后重算 score（HIGH 25 → MEDIUM 10），报告头/状态行/快照一致
+    assert "score=10" in joined and "score: 10/100" in joined
+    assert snaps["skills"][str(tmp_path / "a")]["score"] == 10
+
+def test_drift_without_critical_gets_correction_note(tmp_path):
+    # 发现 2 钉死：纯漂移（零规则命中、无 CRITICAL）的报告块尾附漂移归因纠正行
+    make_skill(tmp_path, "a")
+    snaps = {"skills": {}}
+    audit_roots([str(tmp_path)], RULES, "[]", snaps, cfg=_cfg())
+    (tmp_path / "a/SKILL.md").write_text("# s\nplain extra line, no rule hit")
+    reports = audit_roots([str(tmp_path)], RULES, "[]", snaps, cfg=_cfg())
+    assert any("verdict: FAIL" in r for r in reports)
+    assert any("由内容漂移引起" in r for r in reports)
+
+def test_drift_with_critical_gets_no_correction_note(tmp_path):
+    # 反向钉死：漂移且真有 CRITICAL（blocklist name 命中）→
+    # 「拒绝安装（存在 CRITICAL）」文案本就准确，不附纠正行
+    make_skill(tmp_path, "a")
+    snaps = {"skills": {}}
+    audit_roots([str(tmp_path)], RULES, "[]", snaps, cfg=_cfg())
+    (tmp_path / "a/SKILL.md").write_text("# s changed")
+    reports = audit_roots([str(tmp_path)], RULES, "- name: a\n  source: t\n", snaps, cfg=_cfg())
+    assert any("SR-BLOCK-001" in r for r in reports)   # CRITICAL 在场
+    assert not any("由内容漂移引起" in r for r in reports)

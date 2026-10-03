@@ -754,7 +754,10 @@ def audit_roots(roots, rules_text, blocklist_text, snapshots, cfg, max_depth=5):
     snapshot_dir（文本哈希语义，与 run_engine 的字节级 IOC 哈希刻意不同）。
     前序裁定：render_report 的「拒绝安装」文案前提是 ok 与 CRITICAL 绑定——
     audit 侧以 ``rep.ok = rep.ok and new["status"] != "drifted"`` 补全，drifted
-    报告即使无 CRITICAL 也视为 FAIL。
+    报告即使无 CRITICAL 也视为 FAIL；此时在报告块尾附一行漂移归因纠正说明
+    （render_report 既有文案不动，文案分支化留给 CLI 任务），drifted 且真有
+    CRITICAL 时不附（既有文案本就准确）。信任降级后重算 rep.score：报告头、
+    状态行、快照与 §9 高危门控均按降级后分数自洽。
     规格 §3 共存计数行仅在池内多技能且确有 EXFIL 命中时附加（summary 每技能
     恰一条是测试契约，空计数行不附加）；§9 联动提示需 cfg["usage_file"] 指向
     v1 monitor 用量 JSON（缺文件/坏 JSON 静默跳过，浅耦合）。"""
@@ -772,6 +775,7 @@ def audit_roots(roots, rules_text, blocklist_text, snapshots, cfg, max_depth=5):
                 continue
             rep = run_engine(skill, rules, blocklist_text, max_depth=max_depth)
             rep.findings = apply_trust(rep.findings, trusted)
+            rep.score = score_findings(rep.findings)   # 信任降级后重算：报告头/状态行/快照/§9 门控按降级后分数自洽
             last_findings[skill] = rep.findings
             new = {"name": entry, "status": "baseline-unreviewed", "score": rep.score,
                    "scanned_at": datetime.now().isoformat(timespec="seconds"),
@@ -791,7 +795,12 @@ def audit_roots(roots, rules_text, blocklist_text, snapshots, cfg, max_depth=5):
             rep.ok = rep.ok and new["status"] != "drifted"
             snapshots["skills"][skill] = new
             rep.skill_name = entry; rep.root = skill
-            summary.append(_sanitize(head) + "\n" + render_report(rep))
+            block = _sanitize(head) + "\n" + render_report(rep)
+            if new["status"] == "drifted" and not any(f.severity == "CRITICAL" for f in rep.findings):
+                # 「拒绝安装（存在 CRITICAL）」既有文案在纯漂移场景归因失真；
+                # 附加一行纠正说明（追加-only，render_report 文案分支化留给 CLI 任务）
+                block += "\n" + _sanitize("  注: 该技能 verdict FAIL 由内容漂移引起，非 CRITICAL 命中；用 --show-diff 查看")
+            summary.append(block)
     # 规格 §3：报告上下文——共存计数（与网络外发模式工具共存的技能数）
     netcap = {n for n, s in snapshots["skills"].items()
               if any(f.category == "EXFIL" for f in last_findings.get(n, []))}
