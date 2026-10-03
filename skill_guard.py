@@ -470,6 +470,15 @@ def main(argv=None):
     --watch 未授权 consent、audit --show-diff/--accept-drift 的技能不在快照中，
     均 raise SystemExit。"""
     import argparse
+    # 输出口径一次性封死整类问题：_sanitize 只清零宽/C0/U+FFFD，被扫内容的
+    # emoji 等 cp936 不可编码字符会原样进入报告，GBK 控制台下 print 仍会
+    # UnicodeEncodeError 打崩渲染。入口对 stdout/stderr 统一 errors="replace"
+    # （保编码不改——CJK 控制台正常输出，不可编码字符降级 "?"）。
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(errors="replace")
+        except Exception:
+            pass   # 非 TextIOWrapper（pytest 捕获桩/已重定向）则不处理
     ap = argparse.ArgumentParser(prog="skill-radar guard")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p_scan = sub.add_parser("scan")
