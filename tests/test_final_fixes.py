@@ -207,6 +207,47 @@ def test_hash_ioc_cap_skips_over_8mb(tmp_path):
     rep = run_engine(str(root), parse_rules(RULES), blocklist_text=bl)
     assert not any(x.rule_id == "SR-BLOCK-001" for x in rep.findings)
 
+# ============================================== 发现 6：报告渲染可被被扫内容打崩
+
+HOSTILE_EXCERPT = "data\u200bzero\u200cwidth\u200d\u2060\ufeff\ufffdctrl\x01tail"
+ZERO_WIDTHS = "\u200b\u200c\u200d\u2060\ufeff"
+
+def test_render_report_sanitizes_hostile_chars():
+    f = skill_guard.Finding("X-1", "EXEC", "HIGH", "a\u200b.md", 1,
+                            HOSTILE_EXCERPT, "msg\ufffd\u2060", [])
+    rep = skill_guard.ScanReport("demo\ufffd", "/r", [f], 25, 1, True)
+    text = render_report(rep)
+    for ch in ZERO_WIDTHS + "\ufffd" + "\x01":
+        assert ch not in text
+    text.encode("cp936")   # GBK stdout 场景：必须可编码（原实现此处 UnicodeEncodeError）
+
+def test_json_output_sanitizes_hostile_chars():
+    f = skill_guard.Finding("X-1", "EXEC", "HIGH", "a.md", 1,
+                            HOSTILE_EXCERPT, "msg\ufffd\u200b", [])
+    rep = skill_guard.ScanReport("demo", "/r", [f], 25, 1, True)
+    out = json.dumps(skill_guard._sanitize_json(rep.__dict__),
+                     default=lambda o: o.__dict__, ensure_ascii=False)
+    for ch in ZERO_WIDTHS + "\ufffd" + "\x01":
+        assert ch not in out
+    out.encode("cp936")
+
+def test_cli_json_path_sanitized_end_to_end(tmp_path, capsys):
+    # 端到端：含零宽字符命中的技能目录 --json 输出不含恶意字符。
+    d = tmp_path / "demo"
+    d.mkdir()
+    open(os.path.join(str(d), "SKILL.md"), "w", encoding="utf-8").write(
+        "ok\u200bhidden\u2060line with enough ordinary words after it to fill space\n")
+    assert main(["scan", str(d), "-f", RULES, "--json"]) == 0
+    out = capsys.readouterr().out
+    for ch in ZERO_WIDTHS + "\ufffd":
+        assert ch not in out
+
+def test_detection_side_unaffected_by_output_sanitization():
+    # 清洗只在输出侧；输入侧检测（SR-OBFUS-002 零宽字符）不受影响。
+    f = run_l3([("SKILL.md", "normal\u200bhidden\ufffdtext with plenty of padding")], [],
+               max_depth=5)
+    assert any(x.rule_id == "SR-OBFUS-002" for x in f)
+
 def test_text_file_hash_is_raw_bytes(tmp_path):
     # 语义锁定：文本文件哈希 = 原始文件字节（含 BOM/非法 utf-8 原样），
     # 与 sha256(文件字节) 一致。

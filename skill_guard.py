@@ -303,6 +303,27 @@ class ScanReport:
 def score_findings(findings):
     return min(100, sum(SEVERITY_WEIGHT.get(f.severity, 0) for f in findings))
 
+def _sanitize(s):
+    """输出侧清洗：移除零宽字符、U+FFFD 替换为 "?"、移除 C0 控制字符（保留 \t）。
+
+    被扫内容会原样进入报告/JSON（excerpt/file/message），在 GBK（cp936）stdout 下
+    print 会因无法编码而 UnicodeEncodeError 打崩渲染。只清洗输出，不碰检测输入
+    （SR-OBFUS-002 等在 run_l3 输入侧判定，不受影响）。"""
+    return "".join("?" if ch == "\ufffd" else ch
+                   for ch in s
+                   if ch not in ZERO_WIDTH and (ch >= " " or ch == "\t"))
+
+def _sanitize_json(obj):
+    """_sanitize 的递归版：清洗 JSON 输出树中的全部字符串（含 Finding 字段）。"""
+    if isinstance(obj, str):
+        return _sanitize(obj)
+    if isinstance(obj, dict):
+        return {k: _sanitize_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_json(v) for v in obj]
+    d = getattr(obj, "__dict__", None)
+    return _sanitize_json(d) if d is not None else obj
+
 def render_report(rep):
     order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
     fs = sorted(rep.findings, key=lambda f: (order.get(f.severity, 9), f.file, f.line))
@@ -317,7 +338,7 @@ def render_report(rep):
         lines.append("建议: inspect 命中项；MEDIUM 及以下可接受时照常安装。")
     else:
         lines.append("建议: 未命中任何规则。")
-    return "\n".join(lines)
+    return "\n".join(_sanitize(ln) for ln in lines)
 
 # ---------------------------------------------------------------- 供应链 blocklist
 
@@ -442,7 +463,7 @@ def main(argv=None):
             rules = parse_rules(args.rules_inline) if args.rules_inline else parse_rules(args.rules)
             rep = run_engine(target, rules, open(args.blocklist, encoding="utf-8").read(), repo=repo)
             print(render_report(rep) if not args.json else
-                  json.dumps(rep.__dict__, default=lambda o: o.__dict__, ensure_ascii=False, indent=1))
+                  json.dumps(_sanitize_json(rep.__dict__), ensure_ascii=False, indent=1))
         finally:
             if tmp is not None:
                 _force_rmtree(tmp)
