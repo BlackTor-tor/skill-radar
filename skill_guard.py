@@ -612,5 +612,41 @@ def diff_snapshot(old, new):
     return {"added": sorted(new_k - old_k), "removed": sorted(old_k - new_k),
             "changed": sorted(k for k in old_k & new_k if old[k] != new[k])}
 
+# ---------------------------------------------------------------- discover 有界搜索
+
+def _is_skill_dir(path):
+    return os.path.isfile(os.path.join(path, "SKILL.md"))
+
+def discover_roots(deep=False, max_depth=4):
+    """有界搜索技能根：起点 HOME 与当前工作目录，各自从根起限深 max_depth 层。
+
+    目录含 SKILL.md 即技能根（_is_skill_dir）：收入 found 并从 dirnames 移除
+    （不再向技能内部下探）；每层剪枝 EXCLUDED_DIRS。深度按 os.sep 计数且
+    相对各自起点（start_depth 同法相减）；起点先 normpath 归一——HOME 若为
+    正斜杠形态（如 C:/Users/x），按反斜杠 os.sep 计数会得 0，限深静默失效。
+    deep=True 仅为任务 4 全盘扫描的骨架：起点换成 HOME 所在盘符根与当前盘根
+    （同排除规则、暂不限深），正式放开须经 consent 门。HOME 在函数体内按
+    模块全局**运行时**查找，测试 monkeypatch skill_guard.HOME 即可重定向。
+    起点不存在时 os.walk 静默产出空序列（不报错、不崩溃）。"""
+    starts = [HOME, os.getcwd()]
+    if deep:
+        drive = os.path.splitdrive(HOME)[0]
+        starts = sorted({(drive + os.sep) if drive else "/", os.getcwd()[:3]})
+    found = set()
+    for start in starts:
+        start = os.path.normpath(start)
+        start_depth = start.rstrip(os.sep).count(os.sep)
+        for dirpath, dirnames, _ in os.walk(start):
+            if not deep:
+                depth = dirpath.rstrip(os.sep).count(os.sep) - start_depth
+                if depth >= max_depth:
+                    dirnames[:] = []
+            dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIRS]
+            for d in list(dirnames):
+                p = os.path.join(dirpath, d)
+                if _is_skill_dir(p):
+                    found.add(p); dirnames.remove(d)
+    return sorted(found)
+
 if __name__ == "__main__":
     sys.exit(main())
