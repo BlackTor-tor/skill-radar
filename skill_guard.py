@@ -219,7 +219,23 @@ BLOB_MIN_LEN = 24
 MAX_DECODE_CANDIDATES = 200
 MAX_DECODE_TOTAL_BYTES = 512 * 1024
 
+# CJK 表意/音节文字与全形标点区间：熵检测的剔除对象。混淆 blob 本质是
+# base64/hex 类 ASCII 串（剔除语义不变）；而语义文字按全字符多重集算熵天然
+# 偏高——32 个互异汉字 H=5.0 即过阈值，曾致真实中文技能文档 99%+ 行命中 HIGH
+# （dogfood 误报洪泛根因）。区间含统一表意主区/扩展 A–F/兼容区、CJK 符号与
+# 部首、假名与谚文（同为音节文字，同谬）、全形标点。
+_CJK_RANGES = ((0x3000, 0x303F), (0x3040, 0x30FF), (0x3400, 0x4DBF),
+               (0x4E00, 0x9FFF), (0xAC00, 0xD7AF), (0xF900, 0xFAFF),
+               (0xFF00, 0xFFEF), (0x20000, 0x2FA1F))
+
+def _non_cjk(s):
+    """剔除 _CJK_RANGES 字符后的剩余串——熵检测只评估这部分。"""
+    return "".join(ch for ch in s
+                   if not any(lo <= ord(ch) <= hi for lo, hi in _CJK_RANGES))
+
 def _entropy(s):
+    """Shannon 熵（多重集口径），只对非 CJK 剩余部分计算（_non_cjk）。"""
+    s = _non_cjk(s)
     if not s: return 0.0
     counts = {}
     for ch in s: counts[ch] = counts.get(ch, 0) + 1
@@ -269,9 +285,13 @@ def run_l3(files, rules, max_depth=5):
     findings = []
     for rel, text in files:
         for i, line in enumerate(text.splitlines(), 1):
-            if len(line.strip()) >= ENTROPY_MIN_LEN and _entropy(line) > ENTROPY_THRESHOLD:
+            non_cjk = _non_cjk(line)
+            # 评估门在非 CJK 部分上：纯中文行（剩余为空）永不触发；中英混合行
+            # 按 ASCII 部分（含数字符号）判定——混淆 blob 本质是 ASCII 串。
+            h = _entropy(non_cjk)
+            if len(non_cjk.strip()) >= ENTROPY_MIN_LEN and h > ENTROPY_THRESHOLD:
                 findings.append(Finding("SR-OBFUS-001", "OBFUS", "HIGH", rel, i,
-                    line.strip()[:200], f"高熵内容 (entropy={_entropy(line):.2f})", []))
+                    line.strip()[:200], f"高熵内容 (entropy={h:.2f}, 非 CJK 部分)", []))
             if any(ch in line for ch in ZERO_WIDTH):
                 findings.append(Finding("SR-OBFUS-002", "OBFUS", "HIGH", rel, i,
                     line.strip()[:200], "隐藏字符（零宽/ homoglyph 标记）", []))

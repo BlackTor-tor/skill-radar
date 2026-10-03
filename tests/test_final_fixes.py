@@ -248,6 +248,35 @@ def test_detection_side_unaffected_by_output_sanitization():
                max_depth=5)
     assert any(x.rule_id == "SR-OBFUS-002" for x in f)
 
+# ============================================== 修复波：CJK 熵误报洪泛（SR-OBFUS-001）
+# 全字符多重集熵下 32 个互异汉字 H=5.0 即过阈值，真实中文技能文档 99%+ 行命中
+# HIGH（dogfood 误报洪泛根因）。混淆 blob 本质是 base64/hex 类 ASCII 串，语义
+# 不变——熵只对非 CJK 部分计算，且要求非 CJK 部分 ≥ ENTROPY_MIN_LEN 才评估。
+
+def test_pure_cjk_long_line_not_entropy_flagged():
+    # 纯中文长行（≥32 字符、互异度高，老实现 H≈5.4 必命中）永不触发。
+    line = "这一段技能说明文档完全由汉字构成，用来验证熵检测不再把正常中文语义内容误判为高熵混淆载荷。"
+    assert len(line) >= 32
+    f = run_l3([("SKILL.md", line)], [], max_depth=5)
+    assert not any(x.rule_id == "SR-OBFUS-001" for x in f)
+
+def test_mixed_line_judged_by_ascii_part():
+    # 中英混合行按 ASCII（含数字符号）部分判定：
+    # (a) 非 CJK 部分 ≥32 且高熵（高熵 blob 嵌入中文）→ 仍命中，与纯 ASCII 同判；
+    blob = "a9F#8dK2$pqZ7@Wm4!Rt6&Yb1^Nv3*Le0"
+    f = run_l3([("SKILL.md", f"加密令牌如下：{blob}")], [], max_depth=5)
+    assert any(x.rule_id == "SR-OBFUS-001" for x in f)
+    # (b) 非 CJK 部分 < ENTROPY_MIN_LEN（短 blob 嵌入高互异中文，老实现整行 H≈5.5
+    #     会命中）→ 不评估，不命中。
+    short = "青铜剑戟芬芳苍茫蓊郁巍峨磅礴澄澈旖旎潋滟蜿蜒崎岖嶙峋翱翔驰骋澎湃涟漪悖谬懵懂a9F#8dK2"
+    f = run_l3([("SKILL.md", short)], [], max_depth=5)
+    assert not any(x.rule_id == "SR-OBFUS-001" for x in f)
+
+def test_high_entropy_ascii_still_flagged():
+    # 原有高熵 ASCII 用例不受 CJK 剔除影响。
+    f = run_l3([("SKILL.md", "k: a9F#8dK2$pqZ7@Wm4!Rt6&Yb1^Nv3*Le0")], [], max_depth=5)
+    assert any(x.rule_id == "SR-OBFUS-001" for x in f)
+
 def test_text_file_hash_is_raw_bytes(tmp_path):
     # 语义锁定：文本文件哈希 = 原始文件字节（含 BOM/非法 utf-8 原样），
     # 与 sha256(文件字节) 一致。
