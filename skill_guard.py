@@ -475,7 +475,7 @@ def main(argv=None):
     p_audit.add_argument("--blocklist", default=os.path.join(os.path.dirname(__file__), "rules", "blocklist.yaml"))
     p_audit.add_argument("--strict", action="store_true")
     p_audit.add_argument("--show-diff", metavar="SKILL",
-                         help="打印该技能当前内容与存储基线的 diff（不落盘）")
+                         help="打印该技能当前内容与最近基线的 diff（漂移确认后对上个基线；不落盘）")
     p_audit.add_argument("--accept-drift", metavar="SKILL",
                          help="人工 inspect 后重建该技能的哈希基线（status 重置 baseline-unreviewed）")
     p_audit.add_argument("--watch", type=int, metavar="SEC",
@@ -778,7 +778,11 @@ def audit_roots(roots, rules_text, blocklist_text, snapshots, cfg, max_depth=5):
 
     状态机（规格 §4）：快照无此技能 → NEW，建基线 status="baseline-unreviewed"；
     哈希有变化（added/removed/changed 任一非空）→ DRIFT，status="drifted"；
-    无变化 → 保留原状态 + OK。快照键 = 技能目录路径，值五键齐全；哈希口径用
+    无变化 → 保留原状态 + OK。快照键 = 技能目录路径，值五键齐全；DRIFT 条目
+    额外携带 prev_hashes=被覆写前的旧基线 hashes——否则 --show-diff 在漂移被
+    audit 确认的瞬间就退化为空 diff（s["hashes"] 已是当前内容），状态行指路的
+    inspect 通道随之关闭（规格 §4「人工 inspect 后裁定」闭环缺眼）；NEW/
+    无变化条目不携带该键。哈希口径用
     snapshot_dir（文本哈希语义，与 run_engine 的字节级 IOC 哈希刻意不同）。
     前序裁定：render_report 的「拒绝安装」文案前提是 ok 与 CRITICAL 绑定——
     audit 侧以 ``rep.ok = rep.ok and new["status"] != "drifted"`` 补全，drifted
@@ -815,6 +819,9 @@ def audit_roots(roots, rules_text, blocklist_text, snapshots, cfg, max_depth=5):
                 d = diff_snapshot(old["hashes"], new["hashes"])
                 if d["added"] or d["removed"] or d["changed"]:
                     new["status"] = "drifted"
+                    # 留住被覆写的旧基线：--show-diff 据此在 drift 确认后仍能
+                    # 回答"自上次基线以来改了什么"（状态行指路的 inspect 通道）
+                    new["prev_hashes"] = old["hashes"]
                     head = (f"DRIFT     {entry}  +{len(d['added'])} -{len(d['removed'])} ~{len(d['changed'])}"
                             f"（用 --show-diff {entry} 查看）")
                 else:
@@ -879,7 +886,10 @@ def _watch_once(args, cfg, rules_text, bl_text, snaps):
 
 def cmd_audit(args):
     """audit 子命令分支：
-    - --show-diff SKILL：当前内容快照哈希 vs 存储基线 → diff JSON 打印，**不落盘**；
+    - --show-diff SKILL：当前内容快照哈希 vs 基线 → diff JSON 打印，**不落盘**。
+      基线取 prev_hashes（漂移已被 audit 确认落盘时，s["hashes"] 是确认后的
+      当前内容，须对上个基线比对才能回答"改了什么"）；条目无 prev_hashes
+      （NEW/无变化/accept 后）时对存储基线 s["hashes"]（原语义不变）；
     - --accept-drift SKILL：重建该技能哈希基线（哈希/scanned_at 取当前内容，
       status 重置 baseline-unreviewed——否则 drift 状态在 accept 后永久滞留，
       每次 audit 继续报 drifted，违背规格 §4「合法更新噪音不淹没」的初衷），
@@ -898,15 +908,18 @@ def cmd_audit(args):
     if args.show_diff:
         path, s = _find_skill_entry(snaps, args.show_diff)
         cur = snapshot_dir(path, s["status"], s["score"])["hashes"]
-        d = diff_snapshot(s["hashes"], cur)
+        base = s["prev_hashes"] if "prev_hashes" in s else s["hashes"]
+        d = diff_snapshot(base, cur)
         print(json.dumps(d, indent=1))   # ensure_ascii 默认 True：GBK 控制台安全
         return 0
     if args.accept_drift:
         path, s = _find_skill_entry(snaps, args.accept_drift)
         cur = snapshot_dir(path, s["status"], s["score"])
-        snaps["skills"][path] = {**s, "hashes": cur["hashes"],
-                                 "scanned_at": cur["scanned_at"],
-                                 "status": "baseline-unreviewed"}
+        entry = {**s, "hashes": cur["hashes"],
+                 "scanned_at": cur["scanned_at"],
+                 "status": "baseline-unreviewed"}
+        entry.pop("prev_hashes", None)   # 接受后不再有"上个基线"（--show-diff 回落存储基线）
+        snaps["skills"][path] = entry
         save_snapshots(snaps)
         print(f"re-baselined: {s['name']}")
         return 0
