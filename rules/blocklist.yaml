@@ -11,5 +11,20 @@
 #   "ClawHavoc IOC list 2026-06, antiy.net"）；该来源会出现在命中 finding 的
 #   message 中，供人工复核追溯。
 #
-# 当前为空列表占位；真实 IOC 种子由计划二任务 8 填入。
-[]
+# 填充指引（实现者执行）：从以下公开报告提取技能名/仓库/哈希，逐条附 source：
+#   - ClawHavoc: https://www.antiy.net/p/clawhavoc-analysis-of-large-scale-poisoning-campaign-targeting-the-openclaw-skill-market-for-ai-agents
+#   - Penligent IOC 清单: https://www.penligent.ai/hackinglabs/clawhub-malicious-skills-beyond-prompt-injection
+#   - skills.sh 事件: https://daily.dev/posts/malicious-ai-skills-on-skills-sh-stole-credentials-at-scale-racking-up-1-7m-installs-kaamk0eda
+# 提取到的每条 IOC 在 tests/test_blocklist.py 加一个对应 hash/name 命中用例（回归集）。
+#
+# 已录入（2026-10-02 提取，来源 ClawHavoc · antiy.net 报告）：仅录报告样本表直接
+# 绑定的 SKILL Package Name。报告样本哈希为 MD5 口径，与引擎 hash 字段的 SHA-256
+# 口径不合，不录入；报告另列的类目代表名（typosquat 等）、作者账号与 C2 基础设施
+# 归属置信度/匹配字段不足，宁缺毋滥暂不录。Penligent 页仅见空串 SHA-256 生成残留、
+# skills.sh 事件报道无结构化 IOC，均无条目可录。
+- name: google-k53
+  source: "ClawHavoc / antiy.net（Trojan/OpenClaw.PolySkill, SKILL.md MD5 5e4428176aeb8cfc7f0391654d683a2a）提取 2026-10-02, https://www.antiy.net/p/clawhavoc-analysis-of-large-scale-poisoning-campaign-targeting-the-openclaw-skill-market-for-ai-agents"
+- name: polymarket-all-in-one
+  source: "ClawHavoc / antiy.net（Trojan/OpenClaw.PolySkill, polymarket.py MD5 a3365c837ec2659c2aa04e7010a0db15）提取 2026-10-02, https://www.antiy.net/p/clawhavoc-analysis-of-large-scale-poisoning-campaign-targeting-the-openclaw-skill-market-for-ai-agents"
+- name: rankaj
+  source: "ClawHavoc / antiy.net（Trojan/OpenClaw.PolySkill, index.js MD5 2444b3ab5de42fcca22e6025cf018e3b）提取 2026-10-02, https://www.antiy.net/p/clawhavoc-analysis-of-large-scale-poisoning-campaign-targeting-the-openclaw-skill-market-for-ai-agents"

@@ -1,0 +1,127 @@
+# skill-radar 默认规则集 · 分类对齐 zast-ai 8 类，映射 OWASP Agentic Skills Top 10
+# severity 权重: CRITICAL=40 HIGH=25 MEDIUM=10 LOW=3
+#
+# 本文件由 skill_guard.load_yaml 迷你子集解析，正则以「原样正则」落盘（引号仅
+# 剥壳、不做 YAML 转义）：单反斜杠即正则转义（\b \s \. \| \n）。相对简报原文
+# 的三处既定修正（以 tests/test_ruleset.py 正反样本为准绳，详见 task-8-report）：
+# 1) 简报的 YAML 双反斜杠写法（如 \\.) 在本子集下语义错误（字面反斜杠+任意
+#    字符），全部转为单反斜杠原样正则——与 tests 内 Python 源写法产出的 YAML
+#    文本口径一致（同 tests/test_final_fixes.py 的 RULES）；
+# 2) L1 为行级 AND（patterns 须同一行全部命中），备选型规则的多个备选模式合并
+#    为单条交替正则（SR-EXEC-001/002/003、SR-PERSIST-002、SR-INJ-001/002/003、
+#    SR-DECEP-001/002），否则各备选互斥、规则永远不可命中；组合型规则保留
+#    AND 语义（SR-THEFT-001/002、SR-ABUSE-002、SR-SUPPLY-001 的「目标+动作」
+#    两段式，正样本须同行同时满足）；
+# 3) 迷你子集约束：正则内不得出现裸逗号（行内列表按逗号拆分）与井号（注释
+#    截断）——SR-DECEP-002 的 [0-9K,] 写作 [0-9K\x2c]（\x2c 即逗号字面量，
+#    语义不变）；SR-INJ-001 加 (?i) 前缀（简报正样本「Ignore ...」大写开头
+#    必须命中，其余 INJ/DECEP 文案规则保持原大小写口径）。
+- id: SR-THEFT-001
+  category: THEFT
+  severity: CRITICAL
+  description: 读取 SSH 私钥
+  patterns: ["id_rsa|id_ed25519|\.ssh/authorized_keys", "cat|open|read|Get-Content"]
+  refs: [CWE-522]
+- id: SR-THEFT-002
+  category: THEFT
+  severity: HIGH
+  description: 触及云凭证文件
+  patterns: ["~/\.aws/credentials|~/\.kube/config|\.env\b", "read|cat|open|Get-Content"]
+- id: SR-THEFT-003
+  category: THEFT
+  severity: MEDIUM
+  description: 浏览器敏感数据
+  patterns: ["Login Data|Cookies\b|keychain|dpapi"]
+- id: SR-EXEC-001
+  category: EXEC
+  severity: HIGH
+  description: 下载内容直接管道给 shell
+  patterns: ["curl [^\n]*\|\s*(ba|z)?sh|wget [^\n]*\|\s*(ba|z)?sh|iex \(?Invoke-WebRequest|iwr .*\|\s*iex"]
+  refs: [CWE-78]
+- id: SR-EXEC-002
+  category: EXEC
+  severity: HIGH
+  description: 动态执行字符串
+  patterns: ["\beval\s*\(|\bexec\s*\(|os\.system|subprocess\.(call|run|Popen)[^\n]*shell\s*=\s*True|node\s+-e|python\s+-c"]
+- id: SR-EXEC-003
+  category: EXEC
+  severity: MEDIUM
+  description: 反弹 shell 形态
+  patterns: ["/dev/tcp/|nc\s+-e\s|mkfifo[^\n]*/dev/tcp|socat[^\n]*EXEC"]
+- id: SR-PERSIST-001
+  category: PERSIST
+  severity: HIGH
+  description: 写 shell 启动文件 / crontab
+  patterns: ["\.bashrc|\.zshrc|\.profile\b|crontab\s+-[el]|launchd|schtasks\s+/create"]
+  refs: [CWE-506]
+- id: SR-PERSIST-002
+  category: PERSIST
+  severity: HIGH
+  description: 写 git hooks / authorized_keys
+  patterns: ["\.git/hooks/(pre-commit|post-commit|pre-push)|authorized_keys"]
+- id: SR-EXFIL-001
+  category: EXFIL
+  severity: HIGH
+  description: 单文件内读敏感+网络外发
+  pattern_source: ["\.env\b|id_rsa|credentials|API[_-]?KEY"]
+  pattern_sink: ["curl [^\n]*-d|requests\.post|Invoke-RestMethod .*-Body|nc [^\n]*-e"]
+  pairing: same_file
+- id: SR-EXFIL-002
+  category: EXFIL
+  severity: CRITICAL
+  description: 跨文件读敏感+外发（SKILL.md 指示、脚本执行）
+  pattern_source: ["\.env\b|id_rsa|~/\.aws|credentials"]
+  pattern_sink: ["curl [^\n]*-d|requests\.post|Invoke-RestMethod .*-Body|webhook\.site|pastebin\.com/api"]
+  pairing: cross_file
+  refs: [OWASP-AST02, CWE-200]
+- id: SR-INJ-001
+  category: INJ
+  severity: MEDIUM
+  description: 指令覆盖话术
+  patterns: ["(?i)ignore (all )?(previous|prior) instructions|disregard your (system )?prompt|you must (always )?obey"]
+- id: SR-INJ-002
+  category: INJ
+  severity: MEDIUM
+  description: 诱导静默工具调用 / 不告知用户
+  patterns: ["do not (tell|inform|notify) the user|without (asking|informing) the user|silently (run|execute|call)"]
+- id: SR-INJ-003
+  category: INJ
+  severity: LOW
+  description: 伪造系统/官方口吻
+  patterns: ["^\s*SYSTEM:|<\|?(system|im_start)\|?>|you are now (in )?(developer|root) mode"]
+- id: SR-ABUSE-001
+  category: ABUSE
+  severity: HIGH
+  description: 篡改 agent 配置 / MCP 配置
+  patterns: ["\.claude/settings|\.claude\.json|mcp_servers|\.codex/config|CLAUDE\.md.*append|settings\.json.*hooks"]
+- id: SR-ABUSE-002
+  category: ABUSE
+  severity: MEDIUM
+  description: 修改自身以外的 skill 文件
+  patterns: ["\.agents/skills|\.claude/skills|\.codex/skills", "write|echo [^\n]*>"]
+- id: SR-DECEP-001
+  category: DECEP
+  severity: LOW
+  description: 虚假紧迫感 / 恐吓话术
+  patterns: ["(do this )?(immediately|right now|urgent)|before it is too late|ignore any warnings? about"]
+- id: SR-DECEP-002
+  category: DECEP
+  severity: MEDIUM
+  description: 伪装知名 skill / 官方来源
+  patterns: ["official(ly)? (anthropic|openai|vercel|github) (skill|certified)|trusted by [0-9K\x2c]+ users"]
+- id: SR-SUPPLY-001
+  category: SUPPLY
+  severity: HIGH
+  description: 安装期自动执行（postinstall 型）
+  patterns: ["postinstall|preinstall", "npm install [^\n]*&&|pip install [^\n]*&&"]
+  refs: [OWASP-AST02]
+- id: SR-SUPPLY-002
+  category: SUPPLY
+  severity: MEDIUM
+  description: typosquat 知名包名
+  patterns: ["reqests|pyjpon|panads|lubpplotlib|cluade"]
+- id: SR-SUPPLY-003
+  category: SUPPLY
+  severity: MEDIUM
+  description: 从 gist/短链/原始 IP 拉代码
+  patterns: ["gist\.githubusercontent|bit\.ly|tinyurl\.com|http://[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+"]
