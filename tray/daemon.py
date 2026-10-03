@@ -111,6 +111,9 @@ class Daemon:
             self.state.bump("block")
             self.state.set_guard("quarantine")
             self.state.add_event("block", f"CRITICAL 拦截 {skill_path}")
+            # 终审 I-3：BLOCK 分支也进 Security 屏数据（快照不落，state 直写）
+            self.state.record_skill(skill_path, os.path.basename(skill_path),
+                                    rep.score, "blocked")
             self.on_block(skill_path, rep)
             return "BLOCK"
 
@@ -155,6 +158,11 @@ class Daemon:
             self.state.bump("drift")
             self.state.add_event("drift", f"内容漂移 {entry['name']}")
             self.state.set_guard("alert")
+        # 终审 I-3：成功路径（NEW/DRIFT/OK）把 name/score/status 写进 Security
+        # 屏数据源；status 用快照条目口径（NEW→baseline-unreviewed、DRIFT→drifted、
+        # OK 透传旧值），UI 的建议列由 status+score 推导
+        self.state.record_skill(skill_path, entry["name"], rep.score,
+                                entry["status"])
         return status
 
     # ---- 扫描线程主循环（app 层起线程跑）----

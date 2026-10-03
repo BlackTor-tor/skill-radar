@@ -1,9 +1,11 @@
-# tray/alerts.py — Toast 告警与隔离动作（规格 §1b/§5；隔离是守护唯一写盘动作）
+# tray/alerts.py — Toast 告警与隔离动作（规格 §1b/§5；隔离是对被监听技能目录的
+# 唯一写盘动作（快照/配置写入均落在 ~/.skill-radar 数据目录））
 import os
 import shutil
 import subprocess
 import sys
 from datetime import datetime
+from xml.sax.saxutils import escape as xml_escape
 
 import skill_guard as sg
 
@@ -23,11 +25,14 @@ def _win_toast_ps(t, m):
     WinRT 类型加载、XmlDocument+LoadXml 装载含 t/m 的 XML、
     ToastNotification::new、CreateToastNotifier('SkillRadarTray').Show。
     整段 XML 作为一个 PowerShell 单引号字符串传入——XML 内出现的所有单引号
-    （含 t/m 携带的）统一双写转义，既防注入也防提前闭合字符串。"""
+    （含 t/m 携带的）统一双写转义，既防注入也防提前闭合字符串。
+    t/m 过 XML 实体转义（升级 T3）：目录名含 & < > 时 LoadXml 解析失败
+    → Toast 永久静默失效；转义只覆盖这三实体，引号已在属性外文本节点、
+    无需转义（PS 单引号层另管）。"""
     xml = (
         "<toast><visual><binding template=\"ToastGeneric\">"
-        f"<text id=\"1\">{t}</text>"
-        f"<text id=\"2\">{m}</text>"
+        f"<text id=\"1\">{xml_escape(t)}</text>"
+        f"<text id=\"2\">{xml_escape(m)}</text>"
         "</binding></visual></toast>"
     )
     return (

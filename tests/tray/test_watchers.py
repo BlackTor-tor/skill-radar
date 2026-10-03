@@ -26,6 +26,18 @@ def test_pick_backend_linux_is_interface_stub(monkeypatch):
         watchers.pick_backend()
 
 
+def test_fsevents_watcher_registers_runloop_thread(monkeypatch):
+    # 升级 T5：FSEventsWatcher 的 runloop 线程（= start() 的调用线程，app 层
+    # 把 start 放线程跑）须登记进 _threads，mac shutdown 的 join 才不静默
+    # no-op——与 RDCW watcher 的 _threads 停机口径一致。不调 start（非 mac 上
+    # CDLL 会炸）：断字段存在且初始为空、shutdown 的
+    # getattr(watcher, "_threads", None) or [] 消费模式可用；真跑留 macOS 清单。
+    monkeypatch.setattr(watchers.sys, "platform", "darwin")
+    w = watchers.FSEventsWatcher(["/tmp/pool"], callback=lambda p: None)
+    assert w._threads == []
+    assert (getattr(w, "_threads", None) or []) == []
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="RDCW 真机测试")
 def test_rdcw_reports_created_and_modified(tmp_path):
     events = []

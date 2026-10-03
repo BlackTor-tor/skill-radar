@@ -1,8 +1,19 @@
 # tests/tray/test_app_smoke.py — 任务 5：壳层装配（不真起 GUI，全部打桩）
+import json
 import sys
+import threading
+import time
 import types
 
 import pytest
+
+
+def _redirect_guard(tmp_path, monkeypatch):
+    import skill_guard
+    monkeypatch.setattr("skill_guard.HOME", str(tmp_path / "home"))
+    monkeypatch.setattr("skill_guard.GUARD_DIR", str(tmp_path / "home/.skill-radar"))
+    monkeypatch.setattr("skill_guard.SNAPSHOTS_NAME",
+                        str(tmp_path / "home/.skill-radar/snapshots.json"))
 
 
 def test_app_importable_without_gui(monkeypatch):
@@ -66,17 +77,104 @@ def test_build_daemon_wires_on_block(tmp_path, monkeypatch):
 
 
 def test_bridge_actions_whitelist(tmp_path, monkeypatch):
-    import skill_guard
-    monkeypatch.setattr("skill_guard.HOME", str(tmp_path / "home"))
-    monkeypatch.setattr("skill_guard.GUARD_DIR", str(tmp_path / "home/.skill-radar"))
-    monkeypatch.setattr("skill_guard.SNAPSHOTS_NAME",
-                        str(tmp_path / "home/.skill-radar/snapshots.json"))
+    _redirect_guard(tmp_path, monkeypatch)
     import tray.app as app_mod
     pool = tmp_path / "pool"; pool.mkdir()
     app_mod._install_gui_stubs()
     daemon, state, bridge = app_mod.build_runtime(roots=[str(pool)], mode="warn")
     assert bridge.act("pause", {}) == {"ok": True, "guard": "paused"}
     assert bridge.act("resume", {}) == {"ok": True, "guard": "running"}
+
+
+def test_rescan_marks_skill_dirs_not_pool_root(tmp_path, monkeypatch):
+    # 终审 I-1：注册根是技能池（root 下每个子目录一个技能），旧实现对
+    # <root>/SKILL.md mark_dirty 是静默 no-op——locate_changed_skill 向上
+    # 找不到含 SKILL.md 的目录。改为枚举根下技能子目录逐一投递并回报 queued。
+    _redirect_guard(tmp_path, monkeypatch)
+    import tray.app as app_mod
+    pool = tmp_path / "pool"; pool.mkdir()
+    for name in ("a", "b"):
+        d = pool / name; d.mkdir()
+        (d / "SKILL.md").write_text("# s", encoding="utf-8")
+    (pool / "notaskill").mkdir()            # 非技能目录：不投
+    app_mod._install_gui_stubs()
+    daemon, state, bridge = app_mod.build_runtime(roots=[str(pool)], mode="warn")
+    r = bridge.act("rescan", {})
+    assert r == {"ok": True, "queued": 2}
+    dirty = daemon.dirty_roots()
+    assert str(pool / "a") in dirty and str(pool / "b") in dirty
+    assert str(pool / "notaskill") not in dirty
+    assert str(pool / "SKILL.md") not in dirty   # 不再投池根本身的伪路径
+
+
+def test_pause_resume_loop_restores_processing(tmp_path, monkeypatch):
+    # 终审 I-2 闭环：pause → paused；resume → running；恢复后再次投递的事件
+    # 可被守护处理（不真起监听：DEBOUNCE_S=0 + 直接 mark_dirty，consume 线程
+    # 单技能扫描到 NEW，断言 state 计数与 Security 数据源一并更新）。
+    _redirect_guard(tmp_path, monkeypatch)
+    import tray.app as app_mod
+    from tray.state import today_key
+    pool = tmp_path / "pool"; pool.mkdir()
+    d = pool / "fresh"; d.mkdir()
+    (d / "SKILL.md").write_text("# fresh skill\n", encoding="utf-8")
+    app_mod._install_gui_stubs()
+    daemon, state, bridge = app_mod.build_runtime(roots=[str(pool)], mode="warn")
+    assert bridge.act("pause", {})["ok"] is True
+    assert state.paused is True and state.guard == "paused"
+    assert bridge.act("resume", {})["ok"] is True
+    assert state.paused is False and state.guard == "running"
+
+    monkeypatch.setattr("tray.daemon.DEBOUNCE_S", 0)
+    daemon.mark_dirty(str(d), "manual rescan")
+    t = threading.Thread(target=daemon.consume, daemon=True)
+    t.start()
+    deadline = time.time() + 5
+    # 等 record_skill（_scan_once 收尾最后一步）而非 new 计数，避免
+    # bump→record 之间的微窗口竞态
+    while time.time() < deadline and str(d) not in state.skills:
+        time.sleep(0.05)
+    daemon.stop()
+    t.join(timeout=3)
+    assert state.today[today_key()]["new"] == 1
+    rec = state.skills[str(d)]              # 扫描后 Security 数据源同步更新
+    assert rec["name"] == "fresh" and rec["status"] == "baseline-unreviewed"
+
+
+def test_get_usage_reads_config_file_and_falls_back(tmp_path, monkeypatch):
+    # 终审 I-3：Usage 明细数据源——config 的 usage_file 优先；坏 JSON / 缺
+    # 文件回退空行集不炸 UI 轮询；total=zcode+claude+marker，按 total 降序。
+    _redirect_guard(tmp_path, monkeypatch)
+    import skill_guard
+    import tray.app as app_mod
+    usage = tmp_path / "usage.json"
+    usage.write_text(json.dumps({"skills": {
+        "a-skill": {"zcode": 3, "claude": 1, "marker": 2, "atime": 7,
+                    "last_tool_use": "2026-10-01T09:00:00"},
+        "b-skill": {"zcode": 0, "claude": 0, "marker": 1, "atime": 0,
+                    "last_marker": "2026-09-30"},
+        "c-skill": {"zcode": 0, "claude": 0, "marker": 0, "atime": 0},
+    }}), encoding="utf-8")
+    cfg = skill_guard.load_config()
+    cfg["usage_file"] = str(usage)
+    skill_guard.save_config(cfg)
+    pool = tmp_path / "pool"; pool.mkdir()
+    app_mod._install_gui_stubs()
+    daemon, state, bridge = app_mod.build_runtime(roots=[str(pool)], mode="warn")
+    r = bridge.act("get_usage", {})
+    assert r["ok"] is True
+    rows = r["rows"]
+    assert [x["name"] for x in rows] == ["a-skill", "b-skill", "c-skill"]
+    assert rows[0]["total"] == 6 and rows[0]["last"] == "2026-10-01"
+    assert rows[1]["total"] == 1 and rows[1]["last"] == "2026-09-30"
+    assert rows[2]["total"] == 0 and rows[2]["last"] == ""
+    # 坏 JSON → 空行集回退
+    usage.write_text("{not-json", encoding="utf-8")
+    assert bridge.act("get_usage", {}) == {"ok": True, "rows": []}
+    # 缺文件同样回退
+    cfg = skill_guard.load_config()
+    cfg["usage_file"] = str(tmp_path / "missing.json")
+    skill_guard.save_config(cfg)
+    assert bridge.act("get_usage", {}) == {"ok": True, "rows": []}
 
 
 def test_shutdown_stops_and_joins(tmp_path, monkeypatch):

@@ -30,6 +30,7 @@ class TrayState:
         self.watched_roots = 0
         self.events = []                  # [(kind, text, ts)] 最新在前，环形上限
         self.today = {today_key(): {"new": 0, "drift": 0, "block": 0}}
+        self.skills = {}                  # skill_path → {name, score, status}
         self.paused = False
         self.on_guard_change = lambda g: None   # 壳层钩子（托盘变色）；默认无操作
 
@@ -51,11 +52,21 @@ class TrayState:
             self.today = {d: v for d, v in self.today.items() if d == k}
             self.today.setdefault(k, {"new": 0, "drift": 0, "block": 0})[key] += 1
 
+    def record_skill(self, skill_path, name, score, status):
+        """终审 I-3：Security 屏数据源。扫描线程每轮把结果写入（覆盖同路径
+        旧值）；与 add_event/bump 同锁，snapshot 消费端拿一致视图。"""
+        with self._lock:
+            self.skills[skill_path] = {"name": name, "score": score,
+                                       "status": status}
+
     def snapshot(self):
         with self._lock:
+            # 深拷一层（终审 I-3 + 账本 T1-1）：skills/today 的内层 dict 一并
+            # 复制，UI 侧改动快照不会别名回写内部态
             return {"guard": self.guard,
                     "watched_roots": self.watched_roots,
                     "paused": self.paused,
                     "events": [{"kind": k, "text": t, "ts": ts}
                                for k, t, ts in self.events],
-                    "today": dict(self.today)}
+                    "today": {d: dict(v) for d, v in self.today.items()},
+                    "skills": {p: dict(v) for p, v in self.skills.items()}}

@@ -105,6 +105,27 @@ def test_win_toast_script_carries_text_and_quotes(monkeypatch):
     assert f"<text id=\"2\">{msg.replace(chr(39), chr(39)*2)}</text>" in ps
 
 
+def test_win_toast_escapes_xml_metachars(monkeypatch):
+    """升级 T3：文案含 & < > 时 t/m 必须过 XML 实体转义——否则
+    XmlDocument.LoadXml 解析失败，Toast 永久静默失效（目录名含 & 即触发）。
+    转义只覆盖 & < > 三实体；引号落在文本节点无需转义（PS 单引号层另管）。"""
+    if os.name != "nt":
+        pytest.skip("win32 toast script only exercised on Windows")
+    captured = {}
+
+    def fake_run(argv, **kw):
+        captured["argv"] = argv
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(alerts.subprocess, "run", fake_run)
+    monkeypatch.setattr(alerts.sys, "platform", "win32")
+    toast("A & B < C", "x > y & z")
+    ps = captured["argv"][3]
+    assert "A &amp; B &lt; C" in ps
+    assert "x &gt; y &amp; z" in ps
+    assert "A & B" not in ps and "x > y" not in ps   # 裸元字符不再出现
+
+
 def test_quarantine_same_name_same_second_no_nesting(tmp_path, monkeypatch):
     """同名技能同秒二次隔离：第二个 dest 追加 -2，不嵌套进第一个。"""
     _redirect(tmp_path, monkeypatch)

@@ -79,6 +79,9 @@ def test_scan_changed_skill_reports_drift_and_bumps(tmp_path, monkeypatch):
     assert outcome == "DRIFT"
     assert d.state.today[list(d.state.today)[0]]["drift"] == 1
     assert d.state.guard == "alert"
+    # 终审 I-3：Security 屏数据源随扫描更新（DRIFT → drifted）
+    rec = d.state.skills[str(a)]
+    assert rec["name"] == "a" and rec["status"] == "drifted"
 
 
 def test_drift_then_ok_round_keeps_prev_hashes(tmp_path, monkeypatch):
@@ -102,6 +105,8 @@ def test_drift_then_ok_round_keeps_prev_hashes(tmp_path, monkeypatch):
     assert d.scan_changed_skill(str(a)) == "OK"
     s = skill_guard.load_snapshots()["skills"][str(a)]
     assert s["status"] == "drifted"
+    # 终审 I-3：OK 轮次 state.skills 透传快照条目状态（仍 drifted）
+    assert d.state.skills[str(a)]["status"] == "drifted"
     assert "prev_hashes" in s
     # --show-diff 语义（cmd_audit 同口径 base=prev_hashes, cur=hashes）：
     # prev_hashes != hashes 且对它 diff 非空——若被冲掉则回落 s["hashes"]
@@ -120,6 +125,9 @@ def test_scan_new_skill_reports_new(tmp_path, monkeypatch):
     assert d.state.today[list(d.state.today)[0]]["new"] == 1
     snaps = skill_guard.load_snapshots()
     assert str(a) in snaps["skills"]
+    # 终审 I-3：Security 屏数据源随扫描更新（NEW → baseline-unreviewed）
+    rec = d.state.skills[str(a)]
+    assert rec["name"] == "fresh" and rec["status"] == "baseline-unreviewed"
 
 
 def test_scan_exception_does_not_crash_daemon(tmp_path, monkeypatch):
@@ -146,3 +154,6 @@ def test_scan_critical_in_block_mode_blocks(tmp_path, monkeypatch):
     assert d.scan_changed_skill(str(a)) == "BLOCK"
     assert blocked and blocked[0][0] == str(a)
     assert d.state.today[list(d.state.today)[0]]["block"] == 1
+    # 终审 I-3：BLOCK 分支也进 Security 屏数据源（快照不落，state 直写 "blocked"）
+    rec = d.state.skills[str(a)]
+    assert rec["name"] == "evil" and rec["status"] == "blocked"

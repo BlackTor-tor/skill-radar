@@ -62,3 +62,17 @@ def test_data_table_and_drawer_used():
     html = _read()
     assert "<table" in html and "drawer" in html.lower()
     assert "role=\"dialog\"" in html or "role='dialog'" in html
+
+
+def test_final_b2_wiring_present():
+    # 终审 B2 静态断言：I-2 恢复控件 + I-3 数据源接线（Security ← snapshot.skills、
+    # Usage 明细 ← act('get_usage')）
+    html = _read()
+    assert 'id="ov-resume"' in html                       # Overview 恢复按钮
+    assert "ov-resume').hidden = !st.paused" in html      # 仅 paused 时显示
+    assert "act('resume'" in html                          # 与托盘动态项同一通道
+    assert "st.skills" in html                             # Security 从 snapshot.skills 渲染
+    assert "暂无扫描数据" in html and "awaiting scan" in html   # Security 空态
+    assert "'get_usage'" in html                           # Usage 明细动作
+    assert 'id="usage-detail"' in html                     # 明细容器
+    assert "loadUsage()" in html                           # 切屏拉取

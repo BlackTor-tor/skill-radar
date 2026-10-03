@@ -53,6 +53,7 @@ class JsBridge:
             "rescan": self._rescan, "open_data_dir": self._open_data_dir,
             "show_diff": self._show_diff, "accept_drift": self._accept_drift,
             "set_mode": self._set_mode, "set_quarantine": self._set_quarantine,
+            "get_usage": self._get_usage,
         }
         h = handlers.get(name)
         if h is None:
@@ -68,9 +69,19 @@ class JsBridge:
         return {"ok": True, "guard": "running"}
 
     def _rescan(self, _):
+        # 终审 I-1：注册根是技能池（root 下每个子目录一个技能），对 root 本身
+        # mark_dirty("…/SKILL.md") 经 locate_changed_skill 向上找不到技能——
+        # 对池式根是静默 no-op。改为枚举根下含 SKILL.md 的技能子目录逐一投递。
+        n = 0
         for r in self.daemon.roots:
-            self.daemon.mark_dirty(os.path.join(r, "SKILL.md"), "manual rescan")
-        return {"ok": True}
+            if not os.path.isdir(r):
+                continue
+            for entry in os.listdir(r):
+                skill = os.path.join(r, entry)
+                if os.path.isfile(os.path.join(skill, "SKILL.md")):
+                    self.daemon.mark_dirty(skill, "manual rescan")
+                    n += 1
+        return {"ok": True, "queued": n}
 
     def _open_data_dir(self, _):
         d = sg.GUARD_DIR
@@ -145,6 +156,40 @@ class JsBridge:
         cfg.setdefault("consent", {})["quarantine"] = bool(payload.get("on"))
         sg.save_config(cfg)
         return {"ok": True}
+
+    def _get_usage(self, _):
+        # 终审 I-3：Usage 屏数据源。读 config 的 usage_file（覆盖键，冻结 exe
+        # 下 skill_monitor.DATA_FILE 落临时目录属已知限制，README 有说明），
+        # 未配置则回落 skill_monitor.DATA_FILE。坏 JSON/缺文件回退空行集，
+        # 不炸 UI 轮询。total 口径与 skill_monitor 报告一致（zcode+claude+marker）。
+        import json
+        try:
+            import skill_monitor as sm
+            data_file = sm.DATA_FILE
+        except ImportError:
+            data_file = None
+        path = sg.load_config().get("usage_file") or data_file
+        data = {}
+        if path:
+            try:
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, ValueError):
+                data = {}
+        rows = []
+        for name, s in (data.get("skills") or {}).items():
+            if not isinstance(s, dict):
+                continue
+            zcode, claude, marker = (int(s.get("zcode", 0) or 0),
+                                     int(s.get("claude", 0) or 0),
+                                     int(s.get("marker", 0) or 0))
+            rows.append({"name": str(name), "total": zcode + claude + marker,
+                         "zcode": zcode, "claude": claude, "marker": marker,
+                         "atime": int(s.get("atime", 0) or 0),
+                         "last": (s.get("last_tool_use")
+                                  or s.get("last_marker") or "")[:10]})
+        rows.sort(key=lambda r: (-r["total"], r["name"]))
+        return {"ok": True, "rows": rows[:25]}
 
 
 def build_runtime(roots, mode):
@@ -299,11 +344,22 @@ def main():
     img = Image.new("RGB", (16, 16), ICON_COLORS["running"])
     def _set_icon_color(g):
         icon.icon = Image.new("RGB", (16, 16), ICON_COLORS.get(g, ICON_COLORS["running"]))
+        try:
+            icon.update_menu()   # 动态暂停/恢复项随 guard 态重取文本（终审 I-2）
+        except Exception:
+            pass   # 图标未就绪（run_detached 前）时静默，文本下轮刷新
     state.on_guard_change = _set_icon_color   # 告警变色钩子（托盘三色，规格 §1b）
+    # 终审 I-2：「暂停守护」曾是死胡同（单向 Pause、UI 无恢复控件、resume 零
+    # 调用方）。改为按当前态分发的动态项：pystray MenuItem 文本支持可调用
+    # （update_menu 时重取），action 依 state.paused 分发 pause/resume——
+    # 与 Overview 屏 paused 时显示的「恢复守护 Resume」按钮同一 act 通道。
     menu = pystray.Menu(
         pystray.MenuItem("打开界面 Open", lambda: _reopen_window(bridge)),
         pystray.MenuItem("立即巡检 Rescan now", lambda: bridge.act("rescan")),
-        pystray.MenuItem("暂停守护 Pause", lambda: bridge.act("pause")),
+        pystray.MenuItem(
+            lambda item: "恢复守护 Resume" if bridge.state.paused
+            else "暂停守护 Pause",
+            lambda: bridge.act("resume" if bridge.state.paused else "pause")),
         pystray.MenuItem("退出 Quit", lambda: _handle_quit(bridge.runtime)),
     )
     icon = pystray.Icon("SkillRadar", img, "SkillRadar Tray", menu)

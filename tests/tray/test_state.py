@@ -63,3 +63,21 @@ def test_snapshot_for_ui_is_plain_json():
     assert set(snap) >= {"guard", "watched_roots", "events", "today"}
     json.dumps(snap)   # 可序列化，不抛
     assert snap["events"][0]["kind"] == "scan"
+
+
+def test_snapshot_skills_record_and_deep_copy():
+    # 终审 I-3：record_skill 是 Security 屏数据源的写入口（与 add_event/bump
+    # 同锁）；snapshot 对 skills/today 深拷一层——UI 改快照不别名回写内部态
+    # （today 同口径修账本 T1-1）。
+    st = _st()
+    assert st.skills == {}
+    st.record_skill("C:/pool/a", "a", 12, "scanned")
+    st.record_skill("C:/pool/a", "a", 18, "drifted")   # 同路径覆盖旧值
+    st.bump("new")
+    snap = st.snapshot()
+    assert snap["skills"]["C:/pool/a"] == {"name": "a", "score": 18,
+                                           "status": "drifted"}
+    snap["skills"]["C:/pool/a"]["score"] = 999
+    snap["today"][today_key()]["new"] = 999
+    assert st.skills["C:/pool/a"]["score"] == 18
+    assert st.today[today_key()]["new"] == 1

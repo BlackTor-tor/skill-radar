@@ -109,6 +109,7 @@ tbody tr:hover { background: oklch(0.97 0.005 240); }
     <section id="screen-overview" class="active">
       <h1>Overview 概览</h1>
       <p class="sub">守护状态与最近事件 · Guard status &amp; recent events</p>
+      <button class="btn" id="ov-resume" hidden style="min-height:44px; margin-bottom:14px">恢复守护 Resume</button>
       <div class="grid" id="ov-tiles"></div>
       <h2>Recent events · 最近事件流</h2>
       <table><thead><tr><th>Time 时间</th><th>Kind 类型</th><th>Event 事件</th></tr></thead>
@@ -125,6 +126,8 @@ tbody tr:hover { background: oklch(0.97 0.005 240); }
       <h1>Usage 用量</h1>
       <p class="sub">Top 技能调用 · Top skill usage</p>
       <div id="usage-bars"></div>
+      <h2>调用明细 · Per-skill detail</h2>
+      <div id="usage-detail"></div>
     </section>
     <section id="screen-settings">
       <h1>Settings 设置</h1>
@@ -151,8 +154,10 @@ tbody tr:hover { background: oklch(0.97 0.005 240); }
 <div class="toast" id="toast"></div>
 <script>
 /* pywebview.api 桥：get_state() 2s 轮询 + act(name, payload) 动作。
-   四屏渲染（ovTiles/ovEvents/secRows/usageBars）、Drawer 打开/关闭、
-   开关 set_mode/set_quarantine、show_diff/accept_drift 接线见下方实现。
+   四屏渲染（ovTiles/ovEvents/secRows←snapshot.skills/usageBars）、
+   Usage 明细（act('get_usage')，切屏时拉取）、Drawer 打开/关闭、
+   开关 set_mode/set_quarantine、show_diff/accept_drift、
+   恢复守护 resume（托盘动态菜单项与 Overview 按钮共用）见下方实现。
    约束：innerHTML 拼接前对一切动态文本做 escapeHtml()；XSS 面来自被扫技能名。 */
 async function api(){ return window.pywebview.api; }
 function escapeHtml(s){ return String(s ?? '').replace(/[&<>"']/g,
@@ -169,9 +174,17 @@ const GUARD_VIEW = { running:['运行中 Running','var(--color-success)'],
                      paused:['已暂停 Paused','var(--color-muted)'],
                      alert:['有告警 Alert','var(--color-warning)'],
                      quarantine:['已拦截 Quarantined','var(--color-error)'] };
-const ADVICE = { new:'人工 review 后进入基线 · review then baseline',
-                 drift:'查看 diff 确认后接受漂移 · inspect diff, then accept',
-                 block:'CRITICAL 已拦截，人工检查目录 · inspect manually' };
+const ADVICE = { good:'推荐 Recommended', mid:'谨慎 Install with caution',
+                 bad:'不推荐 Not recommended' };
+/* 终审 I-3：建议列由 status/score 推导——drifted/blocked→不推荐、
+   score>=40→不推荐、score>=25→谨慎、否则推荐 */
+function adviceFor(s){
+  const score = Number(s && s.score) || 0;
+  const st = String((s && s.status) || '');
+  if (st === 'drifted' || st === 'blocked' || score >= 40) return ADVICE.bad;
+  if (score >= 25) return ADVICE.mid;
+  return ADVICE.good;
+}
 function kindBadge(k){
   const v = KIND_STYLE[k] || [k, 'ok'];
   return '<span class="badge ' + v[1] + '">' + escapeHtml(v[0]) + '</span>';
@@ -207,26 +220,23 @@ function evRow(ev){
   return '<tr' + attrs + '><td>' + escapeHtml(ev.ts || '') + '</td><td>' +
          kindBadge(ev.kind) + '</td><td>' + escapeHtml(ev.text || '') + '</td></tr>';
 }
-/* Security 屏：从事件流聚合技能相关条目（v2.2 简化——完整风险表待 skill_guard 数据接线） */
-function secRows(st){
-  const seen = {}, rows = [];
+/* Security 屏：从 snapshot.skills 渲染（终审 I-3 最小接线——daemon 每轮扫描
+   把 name/score/status 写进 state.skills）。行点击 Drawer 仍走事件备注：
+   按技能名从事件流取最近一条作 data-note。无数据时空态「暂无扫描数据」。 */
+function eventNoteMap(st){
+  const m = {};
   for (const ev of (st.events || [])) {
-    const skill = skillFromEvent(ev);
-    if (!skill) continue;
-    if (!seen[skill]) { seen[skill] = { skill: skill, kinds: [], last: ev };
-                        rows.push(seen[skill]); }
-    seen[skill].kinds.push(ev.kind);
+    const s = skillFromEvent(ev);
+    if (s && !(s in m)) m[s] = ev.text || '';
   }
-  return rows;   // events 最新在前 → 聚合行同序
+  return m;
 }
-function secRow(r){
-  const kinds = Array.from(new Set(r.kinds));
-  const key = kinds.indexOf('block') >= 0 ? 'block'
-            : kinds.indexOf('drift') >= 0 ? 'drift' : 'new';
-  return '<tr class="rowlink" data-skill="' + escapeHtml(r.skill) +
-         '" data-note="' + escapeHtml(r.last.text || '') + '"><td>' + escapeHtml(r.skill) +
-         '</td><td>—</td><td>' + kinds.map(kindBadge).join(' ') + '</td><td>' +
-         escapeHtml(ADVICE[key]) + '</td></tr>';
+function secRow(s, noteMap){
+  return '<tr class="rowlink" data-skill="' + escapeHtml(s.name) +
+         '" data-note="' + escapeHtml(noteMap[s.name] || '') + '"><td>' +
+         escapeHtml(s.name) + '</td><td>' + numStr(s.score) + '</td><td>' +
+         escapeHtml(s.status) + '</td><td>' + escapeHtml(adviceFor(s)) +
+         '</td></tr>';
 }
 function usageHtml(st, c){
   const items = [['新增 New', c.new], ['漂移 Drift', c.drift], ['拦截 Block', c.block],
@@ -238,16 +248,47 @@ function usageHtml(st, c){
     Math.round(i[1] / max * 100) + '%"></span></div>' +
     '<span class="usage-num">' + numStr(i[1]) + '</span></div>').join('');
   return '<div class="grid" style="margin-bottom:18px">' +
-         items.map(i => tile(i[0], numStr(i[1]))).join('') + '</div>' + bars +
-         '<p class="sub" style="margin-top:22px">调用级用量（按技能计数）不在守护快照内：' +
-         '运行 skill_monitor.py 生成用量数据。Per-skill call counts are not in the ' +
-         'guard snapshot — run skill_monitor.py to generate usage data.</p>';
+         items.map(i => tile(i[0], numStr(i[1]))).join('') + '</div>' + bars;
+}
+/* ---- Usage 明细（终审 I-3）：act('get_usage') 拉取调用级计数（config
+   usage_file 或 skill_monitor.DATA_FILE，按 total 降序前 25），切到 Usage
+   屏时拉取；空数据/桥不可用回退空态（原空态文案保留）。条形复用 .bar。 ---- */
+let USAGE_ROWS = null;
+async function loadUsage(){
+  const r = await act('get_usage', {});
+  USAGE_ROWS = (r && r.ok && Array.isArray(r.rows)) ? r.rows : [];
+  renderUsageDetail();
+}
+function renderUsageDetail(){
+  const el = $('usage-detail');
+  if (!USAGE_ROWS || !USAGE_ROWS.length) {
+    el.innerHTML = '<p class="empty">暂无用量数据 · No usage data</p>' +
+      '<p class="sub" style="margin-top:8px">调用级用量（按技能计数）不在守护快照内：' +
+      '运行 skill_monitor.py 生成用量数据。Per-skill call counts are not in the ' +
+      'guard snapshot — run skill_monitor.py to generate usage data.</p>';
+    return;
+  }
+  const max = Math.max.apply(null, [1].concat(USAGE_ROWS.map(r => r.total)));
+  el.innerHTML =
+    USAGE_ROWS.map(r =>
+      '<div class="usage-row"><span class="usage-lbl">' + escapeHtml(r.name) + '</span>' +
+      '<div class="bar" style="flex:1"><span style="width:' +
+      Math.round(r.total / max * 100) + '%"></span></div>' +
+      '<span class="usage-num">' + numStr(r.total) + '</span></div>').join('') +
+    '<table style="margin-top:14px"><thead><tr><th>Skill 技能</th><th>Total 总计</th>' +
+    '<th>zcode</th><th>claude</th><th>session</th><th>Last 最近</th></tr></thead><tbody>' +
+    USAGE_ROWS.map(r =>
+      '<tr><td>' + escapeHtml(r.name) + '</td><td>' + numStr(r.total) + '</td><td>' +
+      numStr(r.zcode) + '</td><td>' + numStr(r.claude) + '</td><td>' +
+      numStr(r.marker) + '</td><td>' + escapeHtml(r.last || '—') + '</td></tr>').join('') +
+    '</tbody></table>';
 }
 function render(st){
   if (!st || typeof st !== 'object') return;
   initSettings(st);
   const c = todayCounters(st);
   const g = GUARD_VIEW[st.guard] || [st.guard, 'inherit'];
+  $('ov-resume').hidden = !st.paused;   // 终审 I-2：paused 时给恢复控件（act('resume')）
   $('ov-tiles').innerHTML =
     tile('守护 Guard', '<span style="color:' + g[1] + '">' + escapeHtml(g[0]) + '</span>') +
     tile('监听根 Roots', numStr(st.watched_roots)) +
@@ -261,9 +302,13 @@ function render(st){
     tile('今日新增 New', numStr(c.new)) +
     tile('今日漂移 Drift', numStr(c.drift)) +
     tile('今日拦截 Block', numStr(c.block));
-  const rows = secRows(st);
-  $('sec-rows').innerHTML = rows.length ? rows.map(secRow).join('')
-    : '<tr><td colspan="4" class="empty">暂无技能相关事件 · No skill findings yet</td></tr>';
+  // 终审 I-3：Security 行来自 snapshot.skills；备注按技能名取最近事件
+  const skills = st.skills || {};
+  const paths = Object.keys(skills);
+  const noteMap = eventNoteMap(st);
+  $('sec-rows').innerHTML = paths.length
+    ? paths.map(p => secRow(skills[p], noteMap)).join('')
+    : '<tr><td colspan="4" class="empty">暂无扫描数据 · awaiting scan</td></tr>';
   $('usage-bars').innerHTML = usageHtml(st, c);
 }
 /* ---- Drawer（明细抽屉；数据全部来自 get_state 的 snapshot）---- */
@@ -344,6 +389,7 @@ document.querySelectorAll('nav.sidebar button').forEach(b => b.onclick = () => {
   b.classList.add('active');
   document.querySelectorAll('main section').forEach(s => s.classList.remove('active'));
   document.getElementById('screen-' + b.dataset.screen).classList.add('active');
+  if (b.dataset.screen === 'usage') loadUsage();   // 终审 I-3：切屏时拉用量明细
 });
 function bindRowClicks(id){
   $(id).addEventListener('click', e => {
@@ -359,6 +405,12 @@ $('btn-open-data').onclick = async () => {
   const r = await act('open_data_dir', {});
   toast(r && r.ok ? '已打开数据目录 Data directory opened'
                   : '打开失败 failed: ' + ((r && r.error) || ''));
+};
+/* 终审 I-2：Overview 屏 paused 时显示恢复按钮，与托盘动态菜单项同一 act 通道 */
+$('ov-resume').onclick = async () => {
+  const r = await act('resume', {});
+  if (r && r.ok) { toast('守护已恢复 Guard resumed'); tick(); }
+  else { toast('恢复失败 failed: ' + ((r && r.error) || '')); }
 };
 function bindSwitch(id, fn){
   const el = $(id);

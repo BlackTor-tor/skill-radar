@@ -115,6 +115,10 @@ class FSEventsWatcher:
         self.roots = [str(r) for r in roots]
         self.callback = callback
         self._loop = None
+        # 升级 T5：start() 的调用线程即承载 runloop 的监听线程（app 层把
+        # start 放线程跑），登记进 _threads 后 shutdown 的 join 才不静默
+        # no-op——与 RDCW watcher 的 _threads 停机口径一致。
+        self._threads = []
         self._stopped = threading.Event()
 
     def _c_callback(self, stream, client_info, count, paths, event_flags, event_ids):
@@ -125,6 +129,7 @@ class FSEventsWatcher:
                 self.callback(p.decode("utf-8", errors="ignore"))
 
     def start(self):
+        self._threads.append(threading.current_thread())   # 升级 T5：见 __init__
         cf = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/"
                          "CoreFoundation")
         fse = ctypes.CDLL("/System/Library/Frameworks/CoreServices.framework/"

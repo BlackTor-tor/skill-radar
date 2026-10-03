@@ -336,7 +336,11 @@ ReadDirectoryChangesW，macOS 用 FSEvents——无守护框架、核心零新�
 并对技能池变化作出反应：新技能或内容漂移 → 气泡通知 + 托盘角标；阻断模式下
 CRITICAL 判定还会隔离技能目录（opt-in，移入
 `~/.skill-radar/quarantine/` 并留 RESTORE.txt 说明）。内置界面（pywebview，
-离线单文件 HTML）提供 总览 / 安全 / 用量 / 设置 四屏。构建方式：
+离线单文件 HTML）提供 总览 / 安全 / 用量 / 设置 四屏；用量屏读取
+`skill_usage.json` 计数器——配置里加 `"usage_file": "<绝对路径>"` 可指向
+自定义计数文件（已知限制：frozen exe 下 skill_monitor 默认落在临时目录，
+请在源码目录先跑一次 `python skill_monitor.py` 生成数据，或直接配置
+usage_file）。构建方式：
 
     pip install -r requirements-gui.txt
     python build_tray.py          # Windows: dist/SkillRadarTray.exe（onefile）
