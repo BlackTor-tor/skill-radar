@@ -16,6 +16,14 @@
 #    截断）——SR-DECEP-002 的 [0-9K,] 写作 [0-9K\x2c]（\x2c 即逗号字面量，
 #    语义不变）；SR-INJ-001 加 (?i) 前缀（简报正样本「Ignore ...」大写开头
 #    必须命中，其余 INJ/DECEP 文案规则保持原大小写口径）。
+#
+# dogfood 自扫描口径（task-10 验收，2026-10-02）：对本仓库根跑 scan --strict
+# 预期大量「文档自命中」，属检测能力的在证（每条 defaults 规则至少在仓库自身
+# 内容上命中一次）而非缺陷——本文件各规则的 patterns 定义行会命中自身正则；
+# tests/ 夹具、docs/ 与 README 示例、.superpowers 过程工件、.pytest_cache 缓存
+# 按设计含有恶意样本文本。逐类判定（真阳性/自命中）见 task-10-report.md；
+# 检测真实技能时应以技能目录为目标，而非本仓库根。file_globs 字段当前仅解析、
+# 引擎不消费，不能用作此类排除。
 - id: SR-THEFT-001
   category: THEFT
   severity: CRITICAL
