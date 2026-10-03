@@ -333,7 +333,12 @@ def render_report(rep):
         lines.append(f"  {f.severity:<8} {f.rule_id:<14} {f.file}:{f.line}  {f.message}")
         lines.append(f"           {f.excerpt}")
     if not rep.ok:
-        lines.append("建议: 拒绝安装（存在 CRITICAL）。人工 inspect 后可用 --accept-drift 重新基线化已装技能。")
+        # 拒绝安装的归因按实际 CRITICAL 存在与否分支：ok=False 且无 CRITICAL 只可能
+        # 是 audit 侧的 drifted 裁定（scan 侧 ok=False 蕴含必有 CRITICAL）。
+        if any(f.severity == "CRITICAL" for f in rep.findings):
+            lines.append("建议: 拒绝安装（存在 CRITICAL）。人工 inspect 后可用 --accept-drift 重新基线化已装技能。")
+        else:
+            lines.append("建议: 拒绝安装（内容漂移，无 CRITICAL 命中）。人工 inspect 后可用 --accept-drift 重新基线化已装技能。")
     elif fs:
         lines.append("建议: inspect 命中项；MEDIUM 及以下可接受时照常安装。")
     else:
@@ -439,9 +444,10 @@ def run_engine(root, rules, blocklist_text="[]", max_depth=5, repo=""):
                       ok=not any(f.severity == "CRITICAL" for f in findings))
 
 def main(argv=None):
-    """scan/discover 子命令 CLI。scan 统一返回退出码（--strict 且有 CRITICAL → 1），
-    不内部 raise SystemExit；discover --deep 的 consent 门在未授权且无法交互
-    确认时 raise SystemExit（脚本中传 --yes），与 argparse 的行为口径一致。"""
+    """scan/discover/audit 子命令 CLI。scan/audit 统一返回退出码（scan --strict 且有
+    CRITICAL → 1；audit --strict 且 summary 有 DRIFT/NEW 行 → 1），不内部 raise
+    SystemExit；用户错误路径除外（与 argparse 口径一致）：discover --deep 未授权
+    consent、audit --show-diff/--accept-drift 的技能不在快照中，均 raise SystemExit。"""
     import argparse
     ap = argparse.ArgumentParser(prog="skill-radar guard")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -458,6 +464,22 @@ def main(argv=None):
                         help="全盘扫描起点（需 deep_scan 授权：交互确认或 --yes）")
     p_disc.add_argument("--yes", action="store_true",
                         help="非交互脚本中显式授权 deep_scan（写入 config 持久化）")
+    p_audit = sub.add_parser("audit")
+    # defaults.yaml 由计划二任务 15 填充，当前仓库尚未落地：默认路径存在则用之，
+    # 否则回退空规则集文本（parse_rules("") → 无规则；漂移/基线/blocklist 不受影响）。
+    # 显式传入的 --rules 始终严格读取（文件缺失即刻报错，不吞拼写错误）。
+    _audit_rules_default = os.path.join(os.path.dirname(__file__), "rules", "defaults.yaml")
+    p_audit.add_argument("--rules",
+                         default=_audit_rules_default if os.path.isfile(_audit_rules_default) else "")
+    p_audit.add_argument("--blocklist", default=os.path.join(os.path.dirname(__file__), "rules", "blocklist.yaml"))
+    p_audit.add_argument("--strict", action="store_true")
+    p_audit.add_argument("--show-diff", metavar="SKILL",
+                         help="打印该技能当前内容与存储基线的 diff（不落盘）")
+    p_audit.add_argument("--accept-drift", metavar="SKILL",
+                         help="人工 inspect 后重建该技能的哈希基线（status 重置 baseline-unreviewed）")
+    p_audit.add_argument("--json", action="store_true")
+    p_audit.add_argument("--yes", action="store_true",
+                         help="预留给 --watch 轮询模式的非交互授权（后续任务接入）")
     args = ap.parse_args(argv)
     if args.cmd == "scan":
         tmp = None   # URL 分支克隆出的临时目录；本地路径保持 None，绝不被 rmtree
@@ -494,6 +516,8 @@ def main(argv=None):
         if fresh:
             print(f"新根不自动写入：确认后手动加入 {_config_path()} 的 roots 节"
                   "（- section: roots / path: <路径> / builtin: false）。")
+    elif args.cmd == "audit":
+        return cmd_audit(args)
     return 0
 
 # ---------------------------------------------------------------- 配置存储（roots 注册表 / consent / trust）
@@ -797,8 +821,8 @@ def audit_roots(roots, rules_text, blocklist_text, snapshots, cfg, max_depth=5):
             rep.skill_name = entry; rep.root = skill
             block = _sanitize(head) + "\n" + render_report(rep)
             if new["status"] == "drifted" and not any(f.severity == "CRITICAL" for f in rep.findings):
-                # 「拒绝安装（存在 CRITICAL）」既有文案在纯漂移场景归因失真；
-                # 附加一行纠正说明（追加-only，render_report 文案分支化留给 CLI 任务）
+                # 「拒绝安装」既有文案在纯漂移场景归因失真；附加一行纠正说明
+                #（追加-only；render_report 侧的文案分支化已由 CLI 任务落地）
                 block += "\n" + _sanitize("  注: 该技能 verdict FAIL 由内容漂移引起，非 CRITICAL 命中；用 --show-diff 查看")
             summary.append(block)
     # 规格 §3：报告上下文——共存计数（与网络外发模式工具共存的技能数）
@@ -818,6 +842,56 @@ def audit_roots(roots, rules_text, blocklist_text, snapshots, cfg, max_depth=5):
         except (OSError, ValueError):
             pass
     return summary
+
+# ---------------------------------------------------------------- audit CLI 接入
+
+def _find_skill_entry(snaps, needle):
+    """在快照中按名称或路径找技能条目，返回 (存储键, 条目)。
+
+    路径比对双侧 os.path.normpath 归一（快照键为 os.path.join 裸形态，跨平台
+    分隔符差异由 normpath 吸收；名称比对优先）。未命中属用户错误路径，
+    raise SystemExit（与 argparse / discover consent 门口径一致）。"""
+    for path, s in snaps["skills"].items():
+        if s["name"] == needle or os.path.normpath(path) == os.path.normpath(needle):
+            return path, s
+    raise SystemExit(f"skill not in snapshots: {needle}")
+
+def cmd_audit(args):
+    """audit 子命令三路分支：
+    - --show-diff SKILL：当前内容快照哈希 vs 存储基线 → diff JSON 打印，**不落盘**；
+    - --accept-drift SKILL：重建该技能哈希基线（哈希/scanned_at 取当前内容，
+      status 重置 baseline-unreviewed——否则 drift 状态在 accept 后永久滞留，
+      每次 audit 继续报 drifted，违背规格 §4「合法更新噪音不淹没」的初衷），
+      落盘后返回 0；
+    - 默认：audit_roots 全量审计 + save_snapshots + 打印 summary；--strict 且
+      summary 有 DRIFT/NEW 行 → 1。"""
+    cfg = load_config()
+    rules_text = open(args.rules, encoding="utf-8").read() if args.rules else ""
+    bl_text = open(args.blocklist, encoding="utf-8").read()
+    snaps = load_snapshots()
+    if args.show_diff:
+        path, s = _find_skill_entry(snaps, args.show_diff)
+        cur = snapshot_dir(path, s["status"], s["score"])["hashes"]
+        d = diff_snapshot(s["hashes"], cur)
+        print(json.dumps(d, indent=1))   # ensure_ascii 默认 True：GBK 控制台安全
+        return 0
+    if args.accept_drift:
+        path, s = _find_skill_entry(snaps, args.accept_drift)
+        cur = snapshot_dir(path, s["status"], s["score"])
+        snaps["skills"][path] = {**s, "hashes": cur["hashes"],
+                                 "scanned_at": cur["scanned_at"],
+                                 "status": "baseline-unreviewed"}
+        save_snapshots(snaps)
+        print(f"re-baselined: {s['name']}")
+        return 0
+    roots = [r["path"] for r in cfg["roots"] if os.path.isdir(r["path"])]
+    summary = audit_roots(roots, rules_text, bl_text, snaps, cfg)
+    save_snapshots(snaps)
+    print("\n".join(summary) if not args.json else
+          json.dumps(summary, ensure_ascii=False, indent=1))
+    if args.strict and any(l.startswith(("DRIFT", "NEW")) for l in summary):
+        return 1
+    return 0
 
 if __name__ == "__main__":
     sys.exit(main())
