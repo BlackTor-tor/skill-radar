@@ -212,7 +212,9 @@ def run_pairing(rule, files):
 # ---------------------------------------------------------------- L3 混淆检测
 
 ZERO_WIDTH = "\u200b\u200c\u200d\u2060\ufeff"
-ENTROPY_THRESHOLD, ENTROPY_MIN_LEN = 4.5, 32
+# token 模式校准：base64/hex blob 的熵在 5.5-6.0；URL/路径/自然文本 < 5.0。
+# 只评估行内 ≥32 连续可打印 ASCII 的 token——中文行天然无长 ASCII 串，永不触发。
+ENTROPY_THRESHOLD, ENTROPY_MIN_LEN, ENTROPY_TOKEN_RE = 5.0, 32, re.compile(r"[\x21-\x7e]{%d,}" % 32)
 BLOB_MIN_LEN = 24
 # 膨胀上限（规格 §8.3）：rot13 自逆等会让候选链组合爆炸（实测 2000 token/54KB
 # → 12000 候选），候选总数与解码产出总字节数双封顶，超限停止新增并报告截断。
@@ -285,13 +287,15 @@ def run_l3(files, rules, max_depth=5):
     findings = []
     for rel, text in files:
         for i, line in enumerate(text.splitlines(), 1):
-            non_cjk = _non_cjk(line)
-            # 评估门在非 CJK 部分上：纯中文行（剩余为空）永不触发；中英混合行
-            # 按 ASCII 部分（含数字符号）判定——混淆 blob 本质是 ASCII 串。
-            h = _entropy(non_cjk)
-            if len(non_cjk.strip()) >= ENTROPY_MIN_LEN and h > ENTROPY_THRESHOLD:
+            # token 模式：整行/非 CJK 剩余的熵会被中英混排与 URL 稀释或误报
+            # （真实教训：41,646 条 HIGH 洪泛），改为只评估 ≥32 连续可打印
+            # ASCII token——base64/hex blob 必然是长 ASCII 串，自然文本不是。
+            hot = [(t, _entropy(t)) for t in ENTROPY_TOKEN_RE.findall(line)
+                   if _entropy(t) > ENTROPY_THRESHOLD]
+            if hot:
+                tok, h = max(hot, key=lambda x: x[1])
                 findings.append(Finding("SR-OBFUS-001", "OBFUS", "HIGH", rel, i,
-                    line.strip()[:200], f"高熵内容 (entropy={h:.2f}, 非 CJK 部分)", []))
+                    tok[:120], f"高熵 token（疑似编码 blob, entropy={h:.2f}）", []))
             if any(ch in line for ch in ZERO_WIDTH):
                 findings.append(Finding("SR-OBFUS-002", "OBFUS", "HIGH", rel, i,
                     line.strip()[:200], "隐藏字符（零宽/ homoglyph 标记）", []))
