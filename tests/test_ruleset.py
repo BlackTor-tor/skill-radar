@@ -68,7 +68,15 @@ def test_cli_default_rules_path_resolves_to_defaults_yaml():
     ("SR-SUPPLY-001", False, "npm install left-pad && npm audit fix\n"),
     ("SR-SUPPLY-002", True, "pip install reqests\n"),
     ("SR-SUPPLY-002", False, "pip install requests\n"),
-    ("SR-SUPPLY-003", True, "fetch code from http://192.168.1.1/payload\n"),
+    ("SR-SUPPLY-003", True, "fetch code from http://93.184.216.34/payload\n"),
+    ("SR-SUPPLY-003", True, "fetch code from http://8.8.8.8/payload\n"),
+    ("SR-SUPPLY-003", False, "fetch code from http://127.0.0.1:8080/payload\n"),
+    ("SR-SUPPLY-003", False, "fetch code from http://0.0.0.0/payload\n"),
+    ("SR-SUPPLY-003", False, "fetch code from http://10.0.0.5/payload\n"),
+    ("SR-SUPPLY-003", False, "fetch code from http://172.16.3.7/payload\n"),
+    ("SR-SUPPLY-003", False, "fetch code from http://172.31.255.1/payload\n"),
+    ("SR-SUPPLY-003", False, "fetch code from http://192.168.1.1/payload\n"),
+    ("SR-SUPPLY-003", False, "fetch code from http://169.254.42.42/payload\n"),
     ("SR-SUPPLY-003", False, "fetch code from https://example.com/payload\n"),
 ])
 def test_rule_hits_and_misses(rule_id, should_hit, body, tmp_path):

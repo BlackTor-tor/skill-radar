@@ -131,5 +131,5 @@
 - id: SR-SUPPLY-003
   category: SUPPLY
   severity: MEDIUM
-  description: 从 gist/短链/原始 IP 拉代码
-  patterns: ["gist\.githubusercontent|bit\.ly|tinyurl\.com|http://[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+"]
+  description: 从 gist/短链/公网原始 IP 拉代码
+  patterns: ["gist\.githubusercontent|bit\.ly|tinyurl\.com|http://(?!127\.|0\.0\.0\.0|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|169\.254\.)[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+"]
