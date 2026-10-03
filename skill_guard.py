@@ -73,6 +73,7 @@ SEVERITY_WEIGHT = {"CRITICAL": 40, "HIGH": 25, "MEDIUM": 10, "LOW": 3, "INFO": 0
 EXCLUDED_DIRS = {"node_modules", ".git", "__pycache__", "AppData", "Library",
                  "site-packages", ".venv", "venv", ".cargo", "target"}
 MAX_FILE_BYTES = 2 * 1024 * 1024
+MAX_HASH_FILE_BYTES = 8 * 1024 * 1024   # 单文件哈希上限：超大文件不拖慢引擎（不哈希、不匹配）
 
 @dataclass
 class Rule:
@@ -136,6 +137,29 @@ def collect_text_files(root):
             if b"\x00" in raw:
                 continue
             out.append((os.path.relpath(p, root), raw.decode("utf-8", errors="replace")))
+    return out
+
+def _file_hashes(root):
+    """对 root 下全部文件的原始字节计算 SHA-256（relpath → hexdigest）。
+
+    与 collect_text_files 同样的 EXCLUDED_DIRS 剪枝；但**不**做文本筛选——
+    被空字节嗅探跳过的二进制与 >2MB 超限文件也参与哈希（二进制载荷正是
+    ClawHavoc 型 IOC 场景）。单文件超过 MAX_HASH_FILE_BYTES 跳过。"""
+    out = {}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIRS]
+        for name in sorted(filenames):
+            p = os.path.join(dirpath, name)
+            try:
+                if os.path.getsize(p) > MAX_HASH_FILE_BYTES:
+                    continue
+                h = hashlib.sha256()
+                with open(p, "rb") as f:
+                    for chunk in iter(lambda: f.read(65536), b""):
+                        h.update(chunk)
+                out[os.path.relpath(p, root)] = h.hexdigest()
+            except OSError:
+                continue
     return out
 
 @dataclass
@@ -376,7 +400,8 @@ def _force_rmtree(path):
 def run_engine(root, rules, blocklist_text="[]", max_depth=5, repo=""):
     """编排全引擎：收集文件 → L1+L2（逐规则）+ L3（一次）→ blocklist → 评分。
 
-    ok 语义：无 CRITICAL 即 PASS；文件哈希按 utf-8（errors="replace"）逐文件 sha256。
+    ok 语义：无 CRITICAL 即 PASS；blocklist hash IOC 对文件**原始字节**算
+    SHA-256（含被跳过的二进制/超限文件，单文件 8MB 哈希上限）。
     repo：git 源扫描时传入的 owner/repo 标识（供 blocklist repo IOC 匹配），本地路径默认 ""。
     """
     files = collect_text_files(root)
@@ -386,8 +411,7 @@ def run_engine(root, rules, blocklist_text="[]", max_depth=5, repo=""):
         findings.extend(run_pairing(r, files))
     findings.extend(run_l3(files, rules, max_depth=max_depth))
     name = os.path.basename(os.path.normpath(root))
-    hashes = {rel: hashlib.sha256(t.encode("utf-8", errors="replace")).hexdigest()
-              for rel, t in files}
+    hashes = _file_hashes(root)
     findings.extend(check_blocklist(blocklist_text, name=name, repo=repo, hashes=hashes))
     score = score_findings(findings)
     return ScanReport(name, root, findings, score, len(files),

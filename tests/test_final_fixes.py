@@ -156,3 +156,68 @@ def test_scan_git_source_passes_repo_to_blocklist(tmp_path, capsys):
     data = json.loads(capsys.readouterr().out)
     assert any(x["rule_id"] == "SR-BLOCK-001" for x in data["findings"])
 
+# ============================================== 发现 5：hash IOC 语义与 IOC 源不符
+
+def _sha(data):
+    return hashlib.sha256(data).hexdigest()
+
+def test_hash_ioc_hits_binary_file_bytes(tmp_path):
+    # 二进制载荷不进文本扫描（空字节嗅探跳过），但其原始字节哈希必须能进
+    # blocklist 匹配——ClawHavoc 场景的 IOC 正是二进制文件。
+    root = tmp_path / "demo"
+    os.makedirs(str(root / "bin"))
+    open(os.path.join(str(root), "SKILL.md"), "w", encoding="utf-8").write("# clean")
+    blob = b"\x00\x01\x02MACHO-PAYLOAD-ClawHavoc\x00\xff\xfe"
+    open(os.path.join(str(root), "bin", "payload.dat"), "wb").write(blob)
+    bl = f"""
+- hash: {_sha(blob)}
+  source: "test IOC list"
+"""
+    rep = run_engine(str(root), parse_rules(RULES), blocklist_text=bl)
+    hits = [x for x in rep.findings if x.rule_id == "SR-BLOCK-001"]
+    assert hits and hits[0].severity == "CRITICAL"
+    assert os.path.normpath("bin/payload.dat") in hits[0].file
+    assert rep.ok is False
+
+def test_hash_ioc_hits_oversized_text_file_bytes(tmp_path):
+    # >2MB 被 collect_text_files 跳过的文件同样按原始字节哈希（超限不漏检）。
+    root = tmp_path / "demo"
+    root.mkdir()
+    open(os.path.join(str(root), "SKILL.md"), "w", encoding="utf-8").write("# clean")
+    big = b"A" * (2 * 1024 * 1024 + 1)
+    open(os.path.join(str(root), "big.log"), "wb").write(big)
+    bl = f"""
+- hash: {_sha(big)}
+  source: "test IOC list"
+"""
+    rep = run_engine(str(root), parse_rules(RULES), blocklist_text=bl)
+    assert any(x.rule_id == "SR-BLOCK-001" for x in rep.findings)
+
+def test_hash_ioc_cap_skips_over_8mb(tmp_path):
+    # 单文件 8MB 哈希上限：超大文件不参与哈希（防拖慢），无命中。
+    root = tmp_path / "demo"
+    root.mkdir()
+    open(os.path.join(str(root), "SKILL.md"), "w", encoding="utf-8").write("# clean")
+    huge = b"B" * (8 * 1024 * 1024 + 1)
+    open(os.path.join(str(root), "huge.bin"), "wb").write(huge)
+    bl = f"""
+- hash: {_sha(huge)}
+  source: "test IOC list"
+"""
+    rep = run_engine(str(root), parse_rules(RULES), blocklist_text=bl)
+    assert not any(x.rule_id == "SR-BLOCK-001" for x in rep.findings)
+
+def test_text_file_hash_is_raw_bytes(tmp_path):
+    # 语义锁定：文本文件哈希 = 原始文件字节（含 BOM/非法 utf-8 原样），
+    # 与 sha256(文件字节) 一致。
+    root = tmp_path / "demo"
+    root.mkdir()
+    raw = b"\xef\xbb\xbf# skill with BOM and \xff\xfe junk\n"
+    open(os.path.join(str(root), "SKILL.md"), "wb").write(raw)
+    bl = f"""
+- hash: {_sha(raw)}
+  source: "test IOC list"
+"""
+    rep = run_engine(str(root), parse_rules(RULES), blocklist_text=bl)
+    assert any(x.rule_id == "SR-BLOCK-001" for x in rep.findings)
+

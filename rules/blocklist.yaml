@@ -4,7 +4,8 @@
 # 任一字段与被扫技能相符即各产出一条 CRITICAL finding（rule_id=SR-BLOCK-001, category=SUPPLY）：
 #   name: 技能名（与 SKILL.md name 精确匹配）
 #   repo: 仓库标识（精确匹配，形如 owner/repo）
-#   hash: 文件 SHA-256（与扫描中任一文件哈希相符即命中，finding 定位到对应文件）
+#   hash: 文件 SHA-256（对文件原始字节计算，含被跳过的二进制/超限文件；
+#         单文件 8MB 哈希上限；与扫描中任一文件哈希相符即命中，finding 定位到对应文件）
 #
 # 来源标注要求：每个条目必须带 source 字段，注明情报出处（如
 #   "ClawHavoc IOC list 2026-06, antiy.net"）；该来源会出现在命中 finding 的
