@@ -54,3 +54,15 @@ def extract_target(argv):
             return tok, f"https://github.com/{tok}", tok
         return tok, None, ""
     return None, None, ""
+
+
+def resolve_mode(argv, cfg):
+    """拦截/警告模式（设计裁定 2）：--block 或已持久化 consent.add_block → block。
+    --block 首次出现即经 gate_consent(yes_flag=True) 写入并落盘（gate_consent 复用，
+    规格 §1a）；警告模式永不经过 consent 门。返回 (透传参数, mode)。"""
+    rest, block = split_gateway_flags(argv)
+    if block and not sg.check_consent(cfg, "add_block"):
+        cfg = sg.gate_consent(cfg, "add_block", True)
+        sg.save_config(cfg)
+    mode = "block" if (block or sg.check_consent(cfg, "add_block")) else "warn"
+    return rest, mode

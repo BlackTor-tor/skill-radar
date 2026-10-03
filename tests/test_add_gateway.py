@@ -72,3 +72,28 @@ def test_extract_target_local_path_not_scannable():
     assert extract_target([]) == (None, None, "")
     assert extract_target(["a/b/c"]) == ("a/b/c", None, "")   # 多段路径不误判简写
     assert extract_target(["~/a/b"]) == ("~/a/b", None, "")   # ~/ 前缀不误判简写
+
+# ------------------------------------------------- 任务 2：模式解析
+
+def test_resolve_mode_block_flag_persists_consent(tmp_path, monkeypatch):
+    _redirect_home(tmp_path, monkeypatch)
+    cfg = skill_guard.load_config()
+    assert skill_guard.load_config()["consent"].get("add_block") is not True  # 默认 warn
+    rest, mode = skill_add.resolve_mode(["--block", "a/b"], cfg)
+    assert mode == "block" and rest == ["a/b"]
+    assert skill_guard.load_config()["consent"]["add_block"] is True   # 首次 --block 落盘
+
+def test_resolve_mode_persisted_consent_without_flag(tmp_path, monkeypatch):
+    _redirect_home(tmp_path, monkeypatch)
+    cfg = skill_guard.load_config()
+    skill_add.resolve_mode(["--block", "a/b"], cfg)          # 首次落盘
+    cfg2 = skill_guard.load_config()
+    rest, mode = skill_add.resolve_mode(["a/b"], cfg2)       # 不带 flag 也拦截
+    assert mode == "block" and rest == ["a/b"]
+
+def test_resolve_mode_warn_never_gates(tmp_path, monkeypatch):
+    _redirect_home(tmp_path, monkeypatch)
+    cfg = skill_guard.load_config()
+    rest, mode = skill_add.resolve_mode(["a/b"], cfg)        # 警告模式：无 consent 门
+    assert mode == "warn" and rest == ["a/b"]
+    assert skill_guard.load_config()["consent"].get("add_block") is not True
