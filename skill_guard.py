@@ -439,7 +439,9 @@ def run_engine(root, rules, blocklist_text="[]", max_depth=5, repo=""):
                       ok=not any(f.severity == "CRITICAL" for f in findings))
 
 def main(argv=None):
-    """scan 子命令 CLI；统一返回退出码（--strict 且有 CRITICAL → 1），不内部 raise SystemExit。"""
+    """scan/discover 子命令 CLI。scan 统一返回退出码（--strict 且有 CRITICAL → 1），
+    不内部 raise SystemExit；discover --deep 的 consent 门在未授权且无法交互
+    确认时 raise SystemExit（脚本中传 --yes），与 argparse 的行为口径一致。"""
     import argparse
     ap = argparse.ArgumentParser(prog="skill-radar guard")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -451,6 +453,11 @@ def main(argv=None):
     p_scan.add_argument("--strict", action="store_true")
     p_scan.add_argument("--json", action="store_true")
     p_scan.add_argument("--yes", action="store_true")
+    p_disc = sub.add_parser("discover")
+    p_disc.add_argument("--deep", action="store_true",
+                        help="全盘扫描起点（需 deep_scan 授权：交互确认或 --yes）")
+    p_disc.add_argument("--yes", action="store_true",
+                        help="非交互脚本中显式授权 deep_scan（写入 config 持久化）")
     args = ap.parse_args(argv)
     if args.cmd == "scan":
         tmp = None   # URL 分支克隆出的临时目录；本地路径保持 None，绝不被 rmtree
@@ -469,6 +476,24 @@ def main(argv=None):
                 _force_rmtree(tmp)
         if args.strict and not rep.ok:
             return 1
+    elif args.cmd == "discover":
+        cfg = load_config()
+        if args.deep:
+            cfg = gate_consent(cfg, "deep_scan", args.yes)
+            save_config(cfg)   # 授权状态持久化（已授权时幂等重写，无损回读）
+            roots = discover_roots(deep=True)
+        else:
+            roots = discover_roots()   # 有界扫描，不涉 consent
+        registered = {_canon_path(r.get("path", ""))
+                      for r in cfg.get("roots", []) if r.get("path")}
+        tagged = [(r, _canon_path(r) in registered) for r in roots]
+        fresh = [r for r, known in tagged if not known]
+        print(f"discover: {len(roots)} 个技能根（deep={args.deep}），其中新根 {len(fresh)} 个")
+        for r, known in tagged:
+            print(f"  [{'已注册' if known else '新'}] {r}")
+        if fresh:
+            print(f"新根不自动写入：确认后手动加入 {_config_path()} 的 roots 节"
+                  "（- section: roots / path: <路径> / builtin: false）。")
     return 0
 
 # ---------------------------------------------------------------- 配置存储（roots 注册表 / consent / trust）
@@ -621,17 +646,18 @@ def discover_roots(deep=False, max_depth=4):
     """有界搜索技能根：起点 HOME 与当前工作目录，各自从根起限深 max_depth 层。
 
     目录含 SKILL.md 即技能根（_is_skill_dir）：收入 found 并从 dirnames 移除
-    （不再向技能内部下探）；每层剪枝 EXCLUDED_DIRS。深度按 os.sep 计数且
-    相对各自起点（start_depth 同法相减）；起点先 normpath 归一——HOME 若为
-    正斜杠形态（如 C:/Users/x），按反斜杠 os.sep 计数会得 0，限深静默失效。
-    deep=True 仅为任务 4 全盘扫描的骨架：起点换成 HOME 所在盘符根与当前盘根
-    （同排除规则、暂不限深），正式放开须经 consent 门。HOME 在函数体内按
+    （不再向技能内部下探）；每层剪枝 EXCLUDED_DIRS（deep 分支同一处剪枝，非
+    附加逻辑）。深度按 os.sep 计数且相对各自起点（start_depth 同法相减）；
+    起点先 normpath 归一——HOME 若为正斜杠形态（如 C:/Users/x），按反斜杠
+    os.sep 计数会得 0，限深静默失效。
+    deep=True 为全盘扫描骨架：起点换成 _deep_starts 的跨平台集合（Windows=
+    HOME 与 cwd 所在盘符根的去重集合，可能跨盘；POSIX="/"；同排除规则、
+    暂不限深），正式放开须经 consent 门（gate_consent）。HOME 在函数体内按
     模块全局**运行时**查找，测试 monkeypatch skill_guard.HOME 即可重定向。
     起点不存在时 os.walk 静默产出空序列（不报错、不崩溃）。"""
     starts = [HOME, os.getcwd()]
     if deep:
-        drive = os.path.splitdrive(HOME)[0]
-        starts = sorted({(drive + os.sep) if drive else "/", os.getcwd()[:3]})
+        starts = _deep_starts(HOME, os.getcwd())
     found = set()
     for start in starts:
         start = os.path.normpath(start)
@@ -647,6 +673,53 @@ def discover_roots(deep=False, max_depth=4):
                 if _is_skill_dir(p):
                     found.add(p); dirnames.remove(d)
     return sorted(found)
+
+def _deep_starts(home, cwd):
+    """deep 全盘扫描起点（跨平台）：Windows 取 home 与 cwd 所在**盘符根**的
+    去重集合（可跨盘，如 C:\\ 与 F:\\ 各一个）；POSIX（splitdrive 恒空串）
+    取 "/"。独立成纯函数以便语义测试：在任一平台打桩 os.path.splitdrive
+    即可验证另一分支。修复自任务 3 遗留的 os.getcwd()[:3]——它在 POSIX
+    产生 "/ho" 式垃圾起点（且 Windows 上遗漏 HOME 盘时无兜底）。"""
+    drives = {os.path.splitdrive(p)[0] for p in (home, cwd)} - {""}
+    return sorted(d + os.sep for d in drives) if drives else ["/"]
+
+# ---------------------------------------------------------------- consent 授权门
+
+def _canon_path(p):
+    """跨平台路径比较规范化：normpath → normcase（仅 Windows 小写化）→ 正斜杠。
+    discover 输出据此把发现的根对照 config roots 注册表标注「已注册 / 新」。"""
+    return os.path.normcase(os.path.normpath(p)).replace(os.sep, "/")
+
+def check_consent(cfg, action):
+    """cfg["consent"][action] 真值即已授权；键/节缺失一律视为未授权。"""
+    return bool(cfg.get("consent", {}).get(action))
+
+def interactive_consent(action):
+    """交互确认：打印成本说明后要求**完整**输入 yes（y/no/空/Enter 均拒绝）。"""
+    print(f"[skill-radar] 该动作（{action}）读取面较大，需要明确授权。")
+    print("  了解成本说明见 docs/threat-model.md。输入完整 yes 继续。")
+    return input("confirm> ").strip() == "yes"
+
+def gate_consent(cfg, action, yes_flag):
+    """consent 三路门，返回（可能补写授权的）cfg：
+    已授权 → 原样返回；--yes → 写入授权并返回；交互 TTY → 询问，同意则写入
+    返回；未授权且无法交互确认（管道/CI）→ raise SystemExit（提示传 --yes）。
+    TTY 分支中 input() 的 EOF（Ctrl-D，或 /dev/null 等被误判 TTY 的环境）与
+    stdin 不可读（OSError/已关闭）一律视为拒绝，走 SystemExit 而非裸 traceback。
+    授权落盘由调用方在返回后 save_config(cfg) 完成（main 的 discover --deep 已接）。"""
+    if check_consent(cfg, action):
+        return cfg
+    if yes_flag:
+        cfg.setdefault("consent", {})[action] = True
+        return cfg
+    try:
+        agreed = sys.stdin.isatty() and interactive_consent(action)
+    except (EOFError, OSError, ValueError):
+        agreed = False
+    if agreed:
+        cfg.setdefault("consent", {})[action] = True
+        return cfg
+    raise SystemExit(f"[skill-radar] 动作 {action} 未授权：交互确认或在脚本中传 --yes")
 
 if __name__ == "__main__":
     sys.exit(main())
