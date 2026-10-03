@@ -828,3 +828,7 @@ def resolve_target(target, timeout=120):
 - **规格覆盖**：规格 §3 三层引擎（任务 4/5/6）、§3 规则 schema（任务 2/任务 15-计划二填充 defaults.yaml）、§6 scan 行（任务 9/10）、§8 永不执行/解码上限（任务 3/6 的上限参数）、误报哲学（报告建议文案）。§4-5 属计划二。无遗漏。
 - **占位符扫描**：无"待定/TODO/类似任务 N"；任务 2 中 re.error 包装以注释给出替换行，属实现指引非占位符。
 - **类型一致性**：`Rule.patterns/source/sink/pairing`、`Finding(rule_id,category,severity,file,line,excerpt,message,refs)`、`ScanReport(skill_name,root,findings,score,files_scanned,ok)`、`run_engine(root,rules,blocklist_text,max_depth)`、`collect_text_files(root)->[(rel,text)]`、`load_yaml` 两种顶层形态，与后续计划二引用一致。
+
+## 修订记录
+
+- 2026-10-02 最终审查裁定：字符串拆分检测登记延后至 v2.1.x（与 XOR 并列），本阶段不实现
