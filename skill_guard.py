@@ -713,29 +713,34 @@ def _is_skill_dir(path):
     return os.path.isfile(os.path.join(path, "SKILL.md"))
 
 def discover_roots(deep=False, max_depth=4):
-    """有界搜索技能根：起点 HOME 与当前工作目录，各自从根起限深 max_depth 层。
+    """有界搜索技能根：起点 HOME 与当前工作目录，深度按**起点**区分——
+    HOME 起点限深 max_depth 层（避免整棵用户目录下探）；cwd（当前项目）起点
+    **不限深**（规格 §5「当前项目全深度」）；deep=True 的全盘起点同样不限深。
+    两起点为同一路径时（HOME == cwd）按 HOME 有界处理（此时「当前项目」即
+    HOME，全深度语义让位于有界保护，且与既有测试口径一致）。
 
     目录含 SKILL.md 即技能根（_is_skill_dir）：收入 found 并从 dirnames 移除
-    （不再向技能内部下探）；每层剪枝 EXCLUDED_DIRS（deep 分支同一处剪枝，非
-    附加逻辑）。深度按 os.sep 计数且相对各自起点（start_depth 同法相减）；
-    起点先 normpath 归一——HOME 若为正斜杠形态（如 C:/Users/x），按反斜杠
-    os.sep 计数会得 0，限深静默失效。
-    deep=True 为全盘扫描骨架：起点换成 _deep_starts 的跨平台集合（Windows=
-    HOME 与 cwd 所在盘符根的去重集合，可能跨盘；POSIX="/"；同排除规则、
-    暂不限深），正式放开须经 consent 门（gate_consent）。HOME 在函数体内按
-    模块全局**运行时**查找，测试 monkeypatch skill_guard.HOME 即可重定向。
+    （不再向技能内部下探）；每层剪枝 EXCLUDED_DIRS（不限深的 cwd/deep walk
+    同一剪枝，非附加逻辑）。深度按 os.sep 计数且相对各自起点；起点先 normpath
+    归一——HOME 若为正斜杠形态（如 C:/Users/x），按反斜杠 os.sep 计数会得 0，
+    限深静默失效。deep=True 为全盘扫描骨架：起点换成 _deep_starts 的跨平台
+    集合（Windows=HOME 与 cwd 所在盘符根的去重集合，可能跨盘；POSIX="/"），
+    正式放开须经 consent 门（gate_consent）。HOME 在函数体内按模块全局
+    **运行时**查找，测试 monkeypatch skill_guard.HOME 即可重定向。
     起点不存在时 os.walk 静默产出空序列（不报错、不崩溃）。"""
     starts = [HOME, os.getcwd()]
     if deep:
         starts = _deep_starts(HOME, os.getcwd())
+    home_norm = os.path.normcase(os.path.normpath(HOME))
     found = set()
     for start in starts:
         start = os.path.normpath(start)
+        limit = max_depth if os.path.normcase(start) == home_norm else None
         start_depth = start.rstrip(os.sep).count(os.sep)
         for dirpath, dirnames, _ in os.walk(start):
-            if not deep:
+            if limit is not None:
                 depth = dirpath.rstrip(os.sep).count(os.sep) - start_depth
-                if depth >= max_depth:
+                if depth >= limit:
                     dirnames[:] = []
             dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIRS]
             for d in list(dirnames):

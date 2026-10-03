@@ -227,3 +227,22 @@ def test_trust_hash_is_raw_bytes_not_text(tmp_path):
                           cfg=_cfg(hashes=[_sha_file(d / "SKILL.md")]))
     joined = "\n".join(reports)
     assert "MEDIUM" in joined and "HIGH" not in joined
+
+
+# ============================================ 发现 5（重要）：discover 的 cwd 起点未按规格「全深度」
+
+def test_discover_cwd_full_depth_home_still_bounded(tmp_path, monkeypatch):
+    # 规格 §5「当前项目全深度」：cwd 起点不限深——第 6 层技能根可发现；HOME
+    # 起点保持 max_depth=4——第 5 层仍不可见（两个断言一个测试）。HOME 与 cwd
+    # 取不同目录以分离两种限深语义；EXCLUDED_DIRS 剪枝在不限深的 cwd walk 上
+    # 必须照常生效。
+    home, proj = tmp_path / "home", tmp_path / "proj"
+    make_skill(home, "l1/l2/l3/l4/l5/deep-home")     # HOME 第 5 层技能根：限深下不可见
+    make_skill(proj, "p1/p2/p3/p4/p5/deep-proj")     # cwd 第 6 层技能根：全深度下必须可见
+    make_skill(proj, "p1/node_modules/n")            # 不限深也不得剪破 EXCLUDED_DIRS
+    monkeypatch.setattr("skill_guard.HOME", str(home))
+    monkeypatch.chdir(proj)
+    roots = [r.replace("\\", "/") for r in discover_roots(deep=False)]
+    assert any("deep-proj" in r for r in roots)      # cwd 全深度（修复前第 5 层即截断）
+    assert not any("deep-home" in r for r in roots)  # HOME 仍限深 4
+    assert not any("node_modules" in r for r in roots)
