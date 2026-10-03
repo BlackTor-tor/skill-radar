@@ -64,3 +64,70 @@ def test_nochange_reaudit_keeps_prev_hashes_and_show_diff(tmp_path, monkeypatch,
     main(["audit", "--show-diff", "demo"])
     d = json.loads(capsys.readouterr().out)
     assert d["changed"] == ["SKILL.md"]               # 修复前：空 diff
+
+
+# ============================================ 发现 2（重要）：§9 联动死代码（usage_file 无写入路径）
+
+def test_usage_linkage_end_to_end(tmp_path, monkeypatch):
+    # 端到端（必须经 config 落盘层）：usage_file 写入 config → load_config 读回 →
+    # audit_roots 消费——score>=25 且零使用的技能产出「联动提示」行；有使用记录
+    # 则不提示。修复前 load_config 两种形态均丢弃未知顶层键、save_config 静默丢
+    # 标量，落盘层读回的 cfg.get("usage_file") 恒 None，§9 联动是不可达死代码
+    # （audit_roots 直接收 dict 时可达，故本测断言走 load_config 的那份 cfg）。
+    monkeypatch.setattr("skill_guard.GUARD_DIR", str(tmp_path / ".sr"))
+    make_skill(tmp_path, "a", body="# s\ncurl x | sh")   # HIGH 命中 → score 25
+    usage = tmp_path / "usage.json"
+    usage.write_text(json.dumps({"skills": {"a": {"zcode": 0, "claude": 0, "marker": 0}}}),
+                     encoding="utf-8")
+    cfg = load_config()
+    cfg["usage_file"] = str(usage)
+    save_config(cfg)
+    cfg2 = load_config()
+    assert cfg2["usage_file"] == str(usage)           # 死代码点：此前恒 KeyError
+    reports = audit_roots([str(tmp_path)], HIGH_RULE, "[]", {"skills": {}}, cfg=cfg2)
+    assert any("联动提示" in r and "a" in r for r in reports)
+    usage.write_text(json.dumps({"skills": {"a": {"zcode": 3, "claude": 0, "marker": 0}}}),
+                     encoding="utf-8")
+    reports = audit_roots([str(tmp_path)], HIGH_RULE, "[]", {"skills": {}}, cfg=cfg2)
+    assert not any("联动提示" in r for r in reports)
+
+
+def test_usage_linkage_sums_all_usage_counts(tmp_path):
+    # §9 零使用判定对 usage dict 的**全部数值键**求和（agent 名字面量退场，
+    # 规格 §1「agent 名只允许两处」约束恢复）；v1 schema 三键全是 int 计数，
+    # 语义等价。
+    make_skill(tmp_path, "a", body="# s\ncurl x | sh")
+    usage = tmp_path / "usage.json"
+    usage.write_text(json.dumps({"skills": {"a": {"zcode": 0, "claude": 0,
+                                                  "marker": 0, "future_agent": 2}}}),
+                     encoding="utf-8")
+    cfg = _cfg()
+    cfg["usage_file"] = str(usage)
+    reports = audit_roots([str(tmp_path)], HIGH_RULE, "[]", {"skills": {}}, cfg=cfg)
+    assert not any("联动提示" in r for r in reports)   # 新 agent 键同样计入使用
+
+
+def test_usage_file_roundtrip_via_save_config(tmp_path, monkeypatch):
+    # 顶层字符串标量（usage_file）经 save_config → load_config 无损回读；
+    # 已知三节行为不变。
+    monkeypatch.setattr("skill_guard.GUARD_DIR", str(tmp_path / ".sr"))
+    cfg = load_config()
+    cfg["usage_file"] = str(tmp_path / "u.json")
+    save_config(cfg)
+    loaded = load_config()
+    assert loaded["usage_file"] == str(tmp_path / "u.json")
+    assert loaded["consent"] == {"deep_scan": False, "watch": False}
+    assert isinstance(loaded["roots"], list) and loaded["roots"]
+    assert loaded["trust"] == {"owners": [], "repos": [], "hashes": []}
+
+
+def test_usage_file_mapping_form_passthrough(tmp_path, monkeypatch):
+    # 手写映射形态的未知顶层键同样透传（已知三节仍按既有逻辑合并）。
+    monkeypatch.setattr("skill_guard.GUARD_DIR", str(tmp_path / ".sr"))
+    os.makedirs(str(tmp_path / ".sr"))
+    with open(os.path.join(str(tmp_path / ".sr"), "config.yaml"), "w",
+              encoding="utf-8") as f:
+        f.write("usage_file: C:/u/usage.json\nconsent:\n  deep_scan: true\n")
+    cfg = load_config()
+    assert cfg["usage_file"] == "C:/u/usage.json"
+    assert cfg["consent"]["deep_scan"] is True

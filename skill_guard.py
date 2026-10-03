@@ -578,9 +578,12 @@ def load_config():
     """读 config.yaml：文件缺失 → 默认配置；存在 → 默认值打底、文件值覆盖。
 
     文件为 save_config 的对称格式：顶层列表，每个条目形如
-    ``- section: <名>`` 加一层键值（roots 每条记录一个条目）——这正是
-    load_yaml 子集原生支持的「顶层映射列表」语法（与规则/黑名单文件同构）。
-    手写映射形态（consent: ... 等）也接受，已知键直接覆盖。"""
+    ``- section: <名>`` 加一层键值（roots 每条记录一个条目；无 section 前缀的
+    单键条目是顶层标量键，如 usage_file）——这正是 load_yaml 子集原生支持的
+    「顶层映射列表」语法（与规则/黑名单文件同构）。手写映射形态（consent: ...
+    等）也接受。已知三节（consent/roots/trust）按既有逻辑合并；**未知顶层键
+    原样透传**（如 §9 联动消费的 usage_file——若丢弃，消费端 cfg.get
+    ("usage_file") 恒 None，联动成端到端死代码）。"""
     path = _config_path()
     if not os.path.isfile(path):
         return _default_config()
@@ -596,9 +599,13 @@ def load_config():
                 cfg["roots"].append(body)
             elif sec in cfg and isinstance(cfg[sec], dict):
                 cfg[sec].update(body)
+            elif sec is None:
+                # 无 section 前缀的单键条目 = save_config 的顶层标量写法；
+                # 已知三节不在此覆盖（仍走上方既有分支）。
+                cfg.update({k: v for k, v in body.items() if k not in cfg})
     elif isinstance(data, dict):
         for k, v in data.items():
-            if k in cfg and v is not None:
+            if v is not None:
                 cfg[k] = v
     merged = _default_config()
     # 以真值过滤：文件中缺失/为空的 section 不覆盖对应默认值
@@ -610,7 +617,9 @@ def save_config(cfg):
     """将 config 结构序列化为 load_yaml 可无损回读的对称子集并落盘。
 
     结构契约：consent/trust 为一层映射（各写一个 section 条目）；
-    roots 为 {path, builtin} 记录列表（每条一个 section 条目）。
+    roots 为 {path, builtin} 记录列表（每条一个 section 条目）；
+    顶层标量键（如 §9 联动的 usage_file）写为无 section 前缀的单键条目
+    ``- key: value``——load_config 列表形态按未知顶层键透传回读。
     只服务该结构，不是通用 YAML 序列化器。"""
     os.makedirs(GUARD_DIR, exist_ok=True)
     def dump(v):   # 标量/内联列表 → load_yaml._scalar 可回读的形态
@@ -631,6 +640,10 @@ def save_config(cfg):
                 lines.append(f"- section: {section}")
                 for k2, v2 in item.items():
                     lines.append(f"  {k2}: {dump(v2)}")
+        elif val is not None:
+            # 顶层标量（str/int/bool）：无 section 前缀的单键条目（dump 已
+            # 支持标量；此前该分支缺失，标量被静默丢弃 → usage_file 无写入路径）
+            lines.append(f"- {section}: {dump(val)}")
     open(_config_path(), "w", encoding="utf-8").write("\n".join(lines) + "\n")
 
 # ---------------------------------------------------------------- 快照存储与漂移比对
@@ -874,7 +887,11 @@ def audit_roots(roots, rules_text, blocklist_text, snapshots, cfg, max_depth=5):
             usage = json.load(open(usage_path, encoding="utf-8")).get("skills", {})
             for name, s in snapshots["skills"].items():
                 u = usage.get(s["name"], {})
-                if s["score"] >= 25 and (u.get("zcode", 0) + u.get("claude", 0) + u.get("marker", 0)) == 0:
+                # 零使用判定对 usage dict 的全部数值键求和：不写死 agent 名
+                # （规格 §1「agent 名只允许两处」约束）；v1 schema 各键全是
+                # int 计数，对既有三键语义等价，新增 agent 键自动纳入。
+                if s["score"] >= 25 and \
+                        sum(v for v in u.values() if isinstance(v, int)) == 0:
                     summary.append(_sanitize(f"联动提示: {s['name']} 风险分 {s['score']} 且从未被使用 → 优先删除候选"))
         except (OSError, ValueError):
             pass
