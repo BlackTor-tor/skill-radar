@@ -95,6 +95,40 @@ using-superpowers                         0       5             0      0   2026-
 | `skill_monitor.py` | the monitor: incremental scan + report |
 | `monitor.bat` | double-click report launcher (Windows) |
 
+## Security module (v2): skill_guard.py
+
+v2 adds a supply-chain guard for AI agent skills. A skill is any directory containing
+`SKILL.md`; the guard scans **all** text files inside it (attached scripts included,
+not just SKILL.md) for 8 categories of risk: credential theft (THEFT), malicious
+execution (EXEC), persistence (PERSIST), data exfiltration (EXFIL), prompt injection
+(INJ), agent-config abuse (ABUSE), social-engineering phrasing (DECEP), and
+typosquat / source spoofing (SUPPLY). Deterministic, offline, pure stdlib.
+
+```bash
+# scan one skill directory (or git URL): human report, --json for CI;
+# --strict exits 1 on CRITICAL findings
+python skill_guard.py scan <path|git-url> [--strict] [--json]
+
+# audit every registered root: SHA-256 baseline, drift diff, trust downgrades
+python skill_guard.py audit [--strict] [--watch N] [--show-diff <skill>] [--accept-drift <skill>] [--json]
+
+# discover skill roots on this machine; --deep is full-disk, consent-gated
+python skill_guard.py discover [--deep] [--yes]
+```
+
+The built-in ruleset (8 categories) and the IOC blocklist seed live in
+[`rules/`](rules/) — shareable and overridable per rule.
+
+**Positioning — complementary, not a replacement:**
+
+- **Snyk (embedded scanning)** covers the package/dependency ecosystem; skill-radar covers the SKILL.md directory convention.
+- **LLM review skills** give semantic depth but are non-deterministic; skill-radar is a reproducible, offline first-pass filter.
+- **Behavioral sandboxes** give runtime ground truth at high cost; skill-radar is the cheap deterministic gate to run before and after install.
+
+Threat model, known limits (SkillCloak-class semantic evasion is out of scope for v2),
+and consent gates for `discover --deep` / `audit --watch`:
+[docs/threat-model.md](docs/threat-model.md).
+
 ## License
 
 MIT
@@ -130,3 +164,22 @@ python skill_monitor.py --top 20
 
 **注意**：`npx skills update` 更新技能会覆盖 SKILL.md，更新后重跑
 `apply_skill_markers.py` 补回标记；标记层无法回填历史，从部署当天开始计数。
+
+**安全模块（v2）**：`skill_guard.py` 为技能供应链加一道闸——扫描技能目录
+（含 SKILL.md 的目录，含附带脚本）内的 8 类风险：凭证窃取、恶意执行、持久化、
+数据外发、提示注入、配置滥用、话术欺骗、来源伪装/typosquat。确定性、离线、纯标准库。
+
+```bash
+python skill_guard.py scan <path|git-url> [--strict] [--json]                        # 扫单个技能目录或 git URL；--strict 有 CRITICAL 即退出码 1
+python skill_guard.py audit [--strict] [--watch N] [--show-diff <skill>] [--accept-drift <skill>] [--json]   # 全注册表：基线/漂移/信任降级
+python skill_guard.py discover [--deep] [--yes]                                      # 发现本机技能根；--deep 全盘、需显式授权
+```
+
+**定位——互补不替代**：
+
+- Snyk 内嵌扫描管依赖生态；skill-radar 管 SKILL.md 目录约定
+- LLM 审查 skill 语义深审但不可复现；skill-radar 是可复现、可离线的第一道筛
+- 行为沙箱是运行时真值但重装备；skill-radar 是安装前后随手可跑的廉价闸门
+
+内置规则集（8 类）与 IOC 黑名单在 [`rules/`](rules/)；威胁模型、已知局限与
+授权门见 [docs/threat-model.md](docs/threat-model.md)。
