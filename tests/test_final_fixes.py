@@ -73,3 +73,23 @@ def test_normal_decode_not_truncated():
     assert not any(x.rule_id == "SR-OBFUS-004" for x in f)
     assert any(x.rule_id == "SR-OBFUS-003" for x in f)
 
+# ============================================== 发现 3：.git 后缀启发式放行 ext:: 传输
+
+def test_clone_argv_disables_ext_protocol(monkeypatch):
+    # git ext::<command> 会被 git 经 shell 执行；clone 前必须注入
+    # protocol.ext.allow=never（全局配置须在子命令 clone 之前）。
+    captured = {}
+    def fake_run(cmd, **kw):
+        captured["argv"] = cmd
+        return subprocess.CompletedProcess(cmd, 0)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    base = resolve_target("https://github.com/a/b.git")
+    try:
+        argv = captured["argv"]
+        i = argv.index("-c")
+        assert argv[i + 1] == "protocol.ext.allow=never"
+        assert i < argv.index("clone")            # -c 配置必须在 clone 子命令之前
+        assert "--depth" in argv and "1" in argv  # 浅克隆保持不变
+    finally:
+        _force_rmtree(base)
+

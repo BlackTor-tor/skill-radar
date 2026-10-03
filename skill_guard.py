@@ -334,7 +334,10 @@ def resolve_target(target, timeout=120):
         return target
     base = tempfile.mkdtemp(prefix="skill-radar-scan-")
     try:
-        subprocess.run(["git", "clone", "--depth", "1", "-q", target, base],
+        # protocol.ext.allow=never：.git 后缀启发式会放行 ext::<command>，
+        # 该传输会被 git 经 shell 执行——必须在 clone 前显式封禁。
+        subprocess.run(["git", "-c", "protocol.ext.allow=never",
+                        "clone", "--depth", "1", "-q", target, base],
                        check=True, timeout=timeout,
                        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
     except BaseException:
