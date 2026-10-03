@@ -190,6 +190,10 @@ def run_pairing(rule, files):
 ZERO_WIDTH = "\u200b\u200c\u200d\u2060\ufeff"
 ENTROPY_THRESHOLD, ENTROPY_MIN_LEN = 4.5, 32
 BLOB_MIN_LEN = 24
+# 膨胀上限（规格 §8.3）：rot13 自逆等会让候选链组合爆炸（实测 2000 token/54KB
+# → 12000 候选），候选总数与解码产出总字节数双封顶，超限停止新增并报告截断。
+MAX_DECODE_CANDIDATES = 200
+MAX_DECODE_TOTAL_BYTES = 512 * 1024
 
 def _entropy(s):
     if not s: return 0.0
@@ -199,15 +203,25 @@ def _entropy(s):
     return -sum(c / n * math.log2(c / n) for c in counts.values())
 
 def _decode_candidates(text):
-    """产出 (层数, 解码文本)。base64/hex/rot13；递归上限 5 层。"""
+    """产出 (候选列表, 是否截断)，候选为 (层数, 解码文本)。base64/hex/rot13；
+    递归上限 5 层；膨胀上限（候选总数 / 解码总字节）超限即停止新增并置截断标记。"""
     found = []
+    total = 0
+    truncated = False
     def _dec(t, depth):
-        if depth > 5: return
+        nonlocal total, truncated
+        if truncated or depth > 5: return
         for tok in re.findall(r"[A-Za-z0-9+/=]{%d,}" % BLOB_MIN_LEN, t):
             for cand in _try_b64(tok) + _try_hex(tok) + _try_rot13(tok):
-                found.append((depth + 1, cand)); _dec(cand, depth + 1)
+                if len(found) >= MAX_DECODE_CANDIDATES or \
+                        total + len(cand.encode("utf-8")) > MAX_DECODE_TOTAL_BYTES:
+                    truncated = True
+                    return
+                found.append((depth + 1, cand))
+                total += len(cand.encode("utf-8"))
+                _dec(cand, depth + 1)
     _dec(text, 0)
-    return found
+    return found, truncated
 
 def _try_b64(tok):
     try:
@@ -237,7 +251,12 @@ def run_l3(files, rules, max_depth=5):
             if any(ch in line for ch in ZERO_WIDTH):
                 findings.append(Finding("SR-OBFUS-002", "OBFUS", "HIGH", rel, i,
                     line.strip()[:200], "隐藏字符（零宽/ homoglyph 标记）", []))
-        for depth, decoded in _decode_candidates(text):
+        cands, truncated = _decode_candidates(text)
+        if truncated:
+            findings.append(Finding("SR-OBFUS-004", "OBFUS", "LOW", rel, 1, "",
+                                    "解码候选超限截断（膨胀上限 MAX_DECODE_CANDIDATES/"
+                                    "MAX_DECODE_TOTAL_BYTES），解码重扫可能不完整", []))
+        for depth, decoded in cands:
             if depth > max_depth:
                 continue
             sub_files = [(f"{rel} (decoded L{depth})", decoded)]
