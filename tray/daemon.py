@@ -27,6 +27,7 @@ class Daemon:
         self._dirty = {}          # normpath → (稳定时间戳, last_event_ts)
         self._lock = threading.Lock()
         self._stop = threading.Event()
+        self.consume_thread = None   # app 层把 consume 线程句柄回挂于此（join 用）
         self.on_block = lambda skill_path, rep: None
         base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.rules_text = rules_text if rules_text is not None else \
@@ -175,3 +176,10 @@ class Daemon:
 
     def stop(self):
         self._stop.set()
+
+    def join(self, timeout=5):
+        """等扫描线程收尾（app 层 shutdown 调用；未回挂句柄或扫描线程自身
+        调用时为 no-op）。stop() 后 consume 最迟 0.5s 内退出，timeout=5 足够。"""
+        t = self.consume_thread
+        if t is not None and t is not threading.current_thread() and t.is_alive():
+            t.join(timeout=timeout)

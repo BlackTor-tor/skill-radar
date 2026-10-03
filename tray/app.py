@@ -115,7 +115,11 @@ def build_runtime(roots, mode):
             alerts.toast("skill-radar 已隔离技能",
                          f"{os.path.basename(skill_path)}（{verdict}）"
                          if dest else f"隔离失败，请人工处理 {skill_path}")
-            state.add_event("quarantine", f"已隔离 {skill_path} → {dest}")
+            # 事件文案与 toast 同口径：隔离失败如实记，不伪造"已隔离 → None"
+            if dest:
+                state.add_event("quarantine", f"已隔离 {skill_path} → {dest}")
+            else:
+                state.add_event("quarantine", f"隔离失败，请人工处理 {skill_path}")
         else:
             alerts.toast("skill-radar 检出 CRITICAL", f"{os.path.basename(skill_path)}")
 
@@ -124,6 +128,7 @@ def build_runtime(roots, mode):
     def _on_fs_event(abs_path):
         daemon.mark_dirty(abs_path)
 
+    runtime.daemon = daemon   # shutdown 停机序列用（stop + join consume）
     runtime._on_fs_event = _on_fs_event
     return daemon, state, bridge
 
@@ -161,6 +166,63 @@ def _mode_from_config(cfg):
     return "block" if cfg.get("consent", {}).get("add_block") else "warn"
 
 
+def _index_url():
+    return "file:///" + os.path.join(BASE, "tray", "web", "index.html").replace("\\", "/")
+
+
+def _window_lifecycle(runtime, action):
+    """窗口生命周期状态机（规格 §1b：关窗=缩托盘不退出；Quit 是唯一退出通道）。
+
+    action: "close"（UI 窗 closing 事件）| "reopen"（托盘「打开界面」）|
+    "quit"（托盘 Quit）。返回决策："hide"（veto 关闭 = 缩托盘）|
+    "recreate"（重开 UI 窗）| "quit"（放行关闭并退出）。
+
+    quitting 期间一律 "quit"：pywebview 6.2.1 实证 destroy 也走 FormClosing
+    （winforms on_closing → closing.set()，任一 handler 返回 False 即
+    args.Cancel=True），不放行则 Quit 永远关不掉窗口、start() 永不返回。"""
+    if action == "quit" or getattr(runtime, "quitting", False):
+        return "quit"
+    if action == "reopen":
+        return "recreate"
+    return "hide"   # "close"（及未知动作）保活优先
+
+
+def _handle_ui_closing(runtime, window):
+    """UI 窗 closing 处理器（pywebview veto 语义：返回 False 取消关闭）。
+    常态 hide 缩托盘（窗口保活，「打开界面」show 复原）；退出流程放行。"""
+    if _window_lifecycle(runtime, "close") == "hide":
+        window.hide()
+        return False
+    return None   # quitting：放行，让 destroy 生效
+
+
+def _handle_quit(runtime):
+    """托盘 Quit（唯一退出通道）：置 quitting → shutdown。关窗/重开不经此。"""
+    if _window_lifecycle(runtime, "quit") == "quit":
+        runtime.quitting = True   # closing 处理器随之放行
+        shutdown(runtime)
+
+
+def _reopen_window(bridge):
+    """托盘「打开界面」：常态下窗口只是被 closing-veto hide，show() 复原；
+    窗口已真关（异常路径）则从本线程 create_window 重建（pywebview 支持
+    运行中建窗），并重新绑定 closing 处理器。"""
+    runtime = bridge.runtime
+    if _window_lifecycle(runtime, "reopen") != "recreate":
+        return
+    if runtime.window is not None:
+        try:
+            runtime.window.show()
+            return
+        except Exception:
+            runtime.window = None
+    import webview
+    w = webview.create_window("SkillRadar", url=_index_url(), js_api=bridge,
+                              width=1080, height=720, min_size=(860, 560))
+    w.events.closing += lambda: _handle_ui_closing(runtime, w)
+    runtime.window = w
+
+
 def main():
     import importlib.util
     for mod in ("pystray", "webview"):
@@ -180,6 +242,7 @@ def main():
     w_thread.start()
     s_thread = threading.Thread(target=daemon.consume, daemon=True)
     s_thread.start()
+    daemon.consume_thread = s_thread   # shutdown join consume 用（审查 Important-1）
 
     # 托盘（独立线程 detach；菜单四项，规格 §1b）。
     # 图标：pystray 依赖 Pillow 的 Image——requirements-gui.txt 追加 pillow
@@ -191,25 +254,27 @@ def main():
         icon.icon = Image.new("RGB", (16, 16), ICON_COLORS.get(g, ICON_COLORS["running"]))
     state.on_guard_change = _set_icon_color   # 告警变色钩子（托盘三色，规格 §1b）
     menu = pystray.Menu(
-        pystray.MenuItem("打开界面 Open", lambda: bridge.runtime.window and
-                         bridge.runtime.window.show()),
+        pystray.MenuItem("打开界面 Open", lambda: _reopen_window(bridge)),
         pystray.MenuItem("立即巡检 Rescan now", lambda: bridge.act("rescan")),
         pystray.MenuItem("暂停守护 Pause", lambda: bridge.act("pause")),
-        pystray.MenuItem("退出 Quit", lambda: shutdown(bridge.runtime)),
+        pystray.MenuItem("退出 Quit", lambda: _handle_quit(bridge.runtime)),
     )
     icon = pystray.Icon("SkillRadar", img, "SkillRadar Tray", menu)
     bridge.runtime.icon = icon
     bridge.runtime.watcher = watcher
 
     # 主线程：pywebview（mac 上 NSApplication 必须主线程，设计裁定 1）。
-    # 关窗 = hide（缩托盘），真退出走托盘菜单 shutdown()。
-    webview.create_window("SkillRadar", url="file:///" + os.path.join(
-        BASE, "tray", "web", "index.html").replace("\\", "/"),
-        js_api=bridge, width=1080, height=720, min_size=(860, 560))
-    bridge.runtime.window = webview.windows[0]
+    # 关窗 = 缩托盘（closing 事件 veto → hide，规格 §1b / 审查 Important-2），
+    # 「打开界面」show() 复原；真退出只走托盘 Quit → _handle_quit → shutdown。
+    import webview
+    webview.create_window("SkillRadar", url=_index_url(), js_api=bridge,
+                          width=1080, height=720, min_size=(860, 560))
+    ui = webview.windows[0]
+    bridge.runtime.window = ui
+    ui.events.closing += lambda: _handle_ui_closing(bridge.runtime, ui)
     icon.run_detached()
     webview.start()
-    shutdown(bridge.runtime)   # start() 返回 = 全部窗口关闭/退出
+    shutdown(bridge.runtime)   # start() 返回 = 退出流程收尾（shutdown 幂等）
 
 
 def runtime_event(daemon):
@@ -217,8 +282,26 @@ def runtime_event(daemon):
 
 
 def shutdown(runtime):
-    if runtime.watcher:
-        runtime.watcher.stop()
+    """幂等停机（审查 Important-1）：停监听（join 平台线程）→ 停守护
+    （stop + join consume 线程）→ 停托盘 → 销毁窗口。托盘 Quit 与 main()
+    尾部（start() 返回后）都会调，_shutdown_done 防重入。
+
+    顺序依据：先停事件源（watcher 线程不再 mark_dirty），再停消费者
+    （daemon），等待收尾各给 5s——RDCW 线程 stop 后由 CancelIoEx 立即退出，
+    consume 循环 _stop 置位后最迟 0.5s 退出。"""
+    if getattr(runtime, "_shutdown_done", False):
+        return
+    runtime._shutdown_done = True
+    watcher = getattr(runtime, "watcher", None)
+    if watcher:
+        watcher.stop()
+        for t in list(getattr(watcher, "_threads", None) or []):
+            t.join(timeout=5)
+    daemon = getattr(runtime, "daemon", None)
+    if daemon:
+        daemon.stop()
+        if hasattr(daemon, "join"):
+            daemon.join(timeout=5)
     if runtime.icon:
         runtime.icon.stop()
     if runtime.window:
