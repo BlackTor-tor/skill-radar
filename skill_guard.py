@@ -804,14 +804,21 @@ def apply_trust(findings, trusted):
                          f.excerpt, f.message + " [trusted, downgraded]", f.refs)
             for f in findings]
 
-def _is_trusted(cfg, root):
-    """信任根判定：cfg["trust"]["owners"]/["repos"] 任一子串命中 root 归一路径
-    （反斜杠→正斜杠，大小写敏感）即为信任。第三级内容 hash 信任由 blocklist/IOC
-    侧承接，不在此判定。"""
+def _is_trusted(cfg, root, skill_hash=""):
+    """信任根判定（规格 §4 信任链，三级任一命中即 trusted）：
+    - owners / repos：任一子串命中 root 归一路径（反斜杠→正斜杠，大小写敏感）；
+    - hashes：skill_hash（技能 SKILL.md **原始字节** SHA-256，与 _file_hashes
+      同口径，open("rb") 读取）与 cfg["trust"]["hashes"] 任一条目相等（双侧
+      lower() 比较）。
+    （旧 docstring 曾称"第三级内容 hash 信任由 blocklist/IOC 侧承接"——不成立：
+    blocklist 是黑名单 IOC 匹配，与白名单信任分级无关；hash 级在此实现。）"""
     t = cfg.get("trust", {})
     root_norm = root.replace("\\", "/")
-    return any(o in root_norm for o in t.get("owners", [])) or \
-           any(r in root_norm for r in t.get("repos", []))
+    if any(o in root_norm for o in t.get("owners", [])) or \
+       any(r in root_norm for r in t.get("repos", [])):
+        return True
+    return bool(skill_hash) and skill_hash.lower() in \
+        {str(h).lower() for h in t.get("hashes", [])}
 
 def audit_roots(roots, rules_text, blocklist_text, snapshots, cfg, max_depth=5):
     """audit 主流程（纯函数层；CLI 接入在后续任务）：逐根逐技能 run_engine →
@@ -842,11 +849,16 @@ def audit_roots(roots, rules_text, blocklist_text, snapshots, cfg, max_depth=5):
     for root in roots:
         if not os.path.isdir(root):
             continue
-        trusted = _is_trusted(cfg, root)
         for entry in sorted(os.listdir(root)):
             skill = os.path.join(root, entry)
             if not _is_skill_dir(skill):
                 continue
+            try:   # 信任第三级：SKILL.md 原始字节 SHA-256（与 _file_hashes 同口径）
+                with open(os.path.join(skill, "SKILL.md"), "rb") as f:
+                    skill_hash = hashlib.sha256(f.read()).hexdigest()
+            except OSError:
+                skill_hash = ""
+            trusted = _is_trusted(cfg, root, skill_hash)   # owners/repos 为路径级，逐技能重算结果不变
             rep = run_engine(skill, rules, blocklist_text, max_depth=max_depth)
             rep.findings = apply_trust(rep.findings, trusted)
             rep.score = score_findings(rep.findings)   # 信任降级后重算：报告头/状态行/快照/§9 门控按降级后分数自洽

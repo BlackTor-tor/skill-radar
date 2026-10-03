@@ -13,8 +13,9 @@ import skill_guard
 from skill_guard import (main, load_config, save_config, load_snapshots,
                          audit_roots, discover_roots)
 
-# 夹具规则：HIGH 一条（信任降级 / §9 计分用）；CRITICAL 一条（emoji 端到端用）。
-HIGH_RULE = ("- id: T-HIGH\n  category: EXEC\n  severity: HIGH\n"
+# 夹具规则：HIGH 一条（信任降级 / §9 计分用；id 不含 "HIGH" 字样，供子串断言）；
+# CRITICAL 一条（emoji 端到端用）。
+HIGH_RULE = ("- id: T-EXE\n  category: EXEC\n  severity: HIGH\n"
              "  description: d\n  patterns: ['curl [^\\n]*|sh']\n")
 CRIT_RULE = ("- id: T-CRIT\n  category: EXEC\n  severity: CRITICAL\n"
              "  description: d\n  patterns: ['curl [^\\n]*\\|\\s*(ba)?sh']\n")
@@ -179,3 +180,50 @@ def test_main_reconfigures_stdout_and_stderr(tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
         main(["audit", "--show-diff", "nope"])   # 不存在的技能 → SystemExit，无流输出
     assert seen == {"out": {"errors": "replace"}, "err": {"errors": "replace"}}
+
+
+# ============================================ 发现 4（重要）：trust 第三级（hashes）有 schema 无消费
+
+def _sha_file(path):
+    with open(str(path), "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def test_trust_hash_level_downgrades_high_findings(tmp_path):
+    # trust.hashes 第三级：技能 SKILL.md **原始字节**哈希（_file_hashes 口径，
+    # open("rb")）命中 trust.hashes 即 trusted——HIGH 降 MEDIUM、score 随之重算。
+    # 修复前 _is_trusted 只看 owners/repos，hashes 是 advertised-but-dead schema。
+    # 用大写哈希落库，同时钉死双侧 lower() 比较。
+    make_skill(tmp_path, "a", body="# s\ncurl x | sh")
+    md_hash = _sha_file(tmp_path / "a" / "SKILL.md")
+    snaps = {"skills": {}}
+    reports = audit_roots([str(tmp_path)], HIGH_RULE, "[]", snaps,
+                          cfg=_cfg(hashes=[md_hash.upper()]))
+    joined = "\n".join(reports)
+    assert "MEDIUM" in joined and "HIGH" not in joined
+    assert "[trusted, downgraded]" in joined
+    assert "score=10" in joined                       # 降级后重算（HIGH 25 → MEDIUM 10）
+    assert snaps["skills"][str(tmp_path / "a")]["score"] == 10
+
+
+def test_trust_hash_miss_stays_untrusted(tmp_path):
+    # 反向钉死：SKILL.md 哈希不命中（owners/repos 均空）→ 不降级；
+    # 且 CRITICAL 永不降级的底线不受影响（信任降级表本就无 CRITICAL 映射）。
+    make_skill(tmp_path, "a", body="# s\ncurl x | sh")
+    reports = audit_roots([str(tmp_path)], HIGH_RULE, "[]", {"skills": {}},
+                          cfg=_cfg(hashes=["0" * 64]))
+    joined = "\n".join(reports)
+    assert "HIGH" in joined and "[trusted, downgraded]" not in joined
+
+
+def test_trust_hash_is_raw_bytes_not_text(tmp_path):
+    # 口径锁定：哈希对文件原始字节（含 BOM/非法 utf-8 原样），与 _file_hashes
+    # 的字节级口径一致，而非 snapshot_dir 的文本哈希。
+    raw = b"\xef\xbb\xbf# s\ncurl x | sh\n"
+    d = tmp_path / "a"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_bytes(raw)
+    reports = audit_roots([str(tmp_path)], HIGH_RULE, "[]", {"skills": {}},
+                          cfg=_cfg(hashes=[_sha_file(d / "SKILL.md")]))
+    joined = "\n".join(reports)
+    assert "MEDIUM" in joined and "HIGH" not in joined
