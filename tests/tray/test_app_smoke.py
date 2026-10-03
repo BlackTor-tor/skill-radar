@@ -144,3 +144,61 @@ def test_quit_is_the_only_exit(monkeypatch):
     assert called == [runtime]          # shutdown 恰被调一次
     assert runtime.quitting is True
     assert app_mod._window_lifecycle(runtime, "close") == "quit"   # 放行后续关闭
+
+
+def test_res_base_frozen_vs_source(monkeypatch):
+    # D-1 根因修复：frozen 下资源基 = sys._MEIPASS（数据文件解包处），
+    # 源码运行回退仓库根（tray/ 的父级）。
+    import os
+    import tray.app as app_mod
+    monkeypatch.setattr(sys, "_MEIPASS", "C:/fake/_MEI1234", raising=False)
+    assert app_mod._res_base() == "C:/fake/_MEI1234"
+    monkeypatch.delattr(sys, "_MEIPASS")
+    assert app_mod._res_base() == os.path.dirname(
+        os.path.dirname(os.path.abspath(app_mod.__file__)))
+
+
+def test_run_guard_in_process(monkeypatch):
+    # D-1 同源接缝：_run_guard 改进程内调 sg.main（dev/frozen 通吃）。
+    # 原 subprocess 形态在 frozen 下 sys.executable=托盘 exe 本体且包内无
+    # skill_guard.py——show_diff/accept_drift 会重启托盘而非执行命令。
+    import tray.app as app_mod
+
+    calls = []
+
+    def fake_main(args):
+        calls.append(list(args))
+        print("guard-output-line")
+        return 0
+
+    monkeypatch.setattr(app_mod.sg, "main", fake_main)
+    r = app_mod.JsBridge._run_guard(["audit", "--show-diff", "X"])
+    assert r["ok"] is True
+    assert calls == [["audit", "--show-diff", "X"]]
+    assert "guard-output-line" in r["output"]
+
+    # argparse 口径：SystemExit(2) → ok=False、不炸、无多余 output
+    def exit_code(args):
+        raise SystemExit(2)
+
+    monkeypatch.setattr(app_mod.sg, "main", exit_code)
+    r2 = app_mod.JsBridge._run_guard(["audit", "--show-diff", "missing"])
+    assert r2["ok"] is False
+
+    # sg 显式带消息 SystemExit → 消息进 output 通道
+    def exit_msg(args):
+        raise SystemExit("技能不在快照中")
+
+    monkeypatch.setattr(app_mod.sg, "main", exit_msg)
+    r3 = app_mod.JsBridge._run_guard(["audit", "--show-diff", "missing"])
+    assert r3["ok"] is False
+    assert "技能不在快照中" in r3["output"]
+
+    # 一般异常 → ok=False、异常文本进 output、不向壳层抛
+    def boom(args):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(app_mod.sg, "main", boom)
+    r4 = app_mod.JsBridge._run_guard(["audit"])
+    assert r4["ok"] is False
+    assert "kaboom" in r4["output"]

@@ -1,12 +1,25 @@
 # tray/app.py — SkillRadar Tray 入口：线程模型（设计裁定 1）+ pystray 托盘 +
 # pywebview 窗口 + js_bridge。关窗 = 缩托盘（hide），托盘菜单退出才真退出。
+import contextlib
+import io
 import os
 import subprocess
 import sys
 import threading
 import types
 
-BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+def _res_base():
+    """资源基目录：frozen（PyInstaller onefile）下数据文件（tray/web、rules）
+    解包在 sys._MEIPASS；源码运行时是仓库根。不能统一用
+    dirname(dirname(__file__))——frozen 下入口脚本 __file__ 落在 _MEIPASS 根，
+    二层 dirname 会指到 %TEMP%（D-1 白屏根因：index.html 实际在
+    _MEIPASS/tray/web/ 下）。frozen 分支优先，回退源码口径。"""
+    return getattr(sys, "_MEIPASS", None) or \
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+BASE = _res_base()
 sys.path.insert(0, BASE)
 
 import skill_guard as sg            # noqa: E402
@@ -79,12 +92,25 @@ class JsBridge:
 
     @staticmethod
     def _run_guard(args):
+        # 进程内执行 skill_guard.main（dev/frozen 通吃）。原 subprocess 形态在
+        # frozen 下是坏的：sys.executable 是托盘 exe 本体，且包内没有可执行的
+        # skill_guard.py——show_diff/accept_drift 会重启托盘而非执行命令（D-1
+        # 同源接缝）。sg.main 的 stdout reconfigure 自带 try/except，
+        # 对 redirect 的 StringIO 桩安全。
+        buf_out, buf_err = io.StringIO(), io.StringIO()
         try:
-            p = subprocess.run([sys.executable, os.path.join(BASE, "skill_guard.py"), *args],
-                               capture_output=True, text=True, timeout=300)
-            return {"ok": p.returncode == 0, "output": (p.stdout or p.stderr)[-4000:]}
-        except (OSError, subprocess.SubprocessError) as e:
-            return {"error": str(e)}
+            with contextlib.redirect_stdout(buf_out), \
+                    contextlib.redirect_stderr(buf_err):
+                rc = sg.main(args)
+        except SystemExit as e:   # argparse / sg 显式 exit 口径：不炸壳层
+            rc = e.code
+            if not isinstance(rc, int) and rc:
+                buf_err.write(str(rc))   # 带消息的 SystemExit → 进 output
+        except Exception as e:
+            rc = 1
+            buf_err.write(str(e))
+        return {"ok": rc == 0,
+                "output": (buf_out.getvalue() + buf_err.getvalue())[-4000:]}
 
     def _set_mode(self, payload):
         cfg = sg.load_config()
