@@ -72,6 +72,44 @@ systematic-debugging                     16       0             0      0   2026-
 using-superpowers                         0       5             0      0   2026-09-25
 ```
 
+## Usage patterns
+
+**Neither tool is a daemon.** Your agents write their session logs continuously;
+skill-radar only *reads* those logs when you run it. Not running it for three months
+loses nothing — the next run catches up on everything logged in between. No
+background service, no autostart, nothing to keep alive.
+
+### Usage radar (`skill_monitor.py`) — three ways to run it
+
+| Pattern | Command | When |
+|---|---|---|
+| **On demand** (default) | `python skill_monitor.py` | whenever you want a report; exits when done |
+| **Scheduled report** | Task Scheduler / cron: `python /path/to/skill_monitor.py --top 20 >> usage-report.log` | a weekly digest, fully unattended |
+| **Live watch** (foreground, optional) | `python skill_monitor.py --watch 60` | watch deltas in real time; Ctrl+C to stop — stopping loses nothing |
+
+One-time setup: run `apply_skill_markers.py` once; run it again after every
+`npx skills update` (updates overwrite SKILL.md and remove the markers).
+
+### Supply-chain guard (`skill_guard.py`) — where it fits your workflow
+
+```bash
+# BEFORE installing a skill you found online — the pre-install gate
+python skill_guard.py scan https://github.com/someone/some-skills --strict
+
+# right after installing (or on first use): baseline every installed skill
+python skill_guard.py audit
+
+# after `npx skills update` — legit updates also raise DRIFT, so:
+python skill_guard.py audit --show-diff <skill>     # what actually changed?
+python skill_guard.py audit --accept-drift <skill>  # diff looked fine → re-baseline
+
+# unattended sweep: catches NEW skills, DRIFT, blocklist hits; exit 1 on problems
+python skill_guard.py audit --strict                # hook into Task Scheduler / cron
+```
+
+A typical rhythm: `scan` before every install, `audit --strict` on a weekly
+schedule, and `--accept-drift` only after you have eyeballed the diff.
+
 ## Notes & caveats
 
 - **Re-run `apply_skill_markers.py` after `npx skills update`** — updating skills
@@ -92,7 +130,9 @@ using-superpowers                         0       5             0      0   2026-
 | File | Purpose |
 |---|---|
 | `apply_skill_markers.py` | inject/remove the universal markers (idempotent) |
-| `skill_monitor.py` | the monitor: incremental scan + report |
+| `skill_monitor.py` | usage radar: incremental scan + report |
+| `skill_guard.py` | supply-chain guard: `scan` / `audit` / `discover` |
+| `rules/` | default ruleset (8 categories) + IOC blocklist seed |
 | `monitor.bat` | double-click report launcher (Windows) |
 
 ## Security module (v2): skill_guard.py
@@ -183,3 +223,40 @@ python skill_guard.py discover [--deep] [--yes]                                 
 
 内置规则集（8 类）与 IOC 黑名单在 [`rules/`](rules/)；威胁模型、已知局限与
 授权门见 [docs/threat-model.md](docs/threat-model.md)。
+
+## 使用方式
+
+**两个工具都不是 daemon。** agent 会持续把会话写进各自的日志目录；skill-radar
+只是在你运行它的时候**读取**这些日志。三个月不跑也不丢数据——下次运行会把期间
+的所有调用全部补上。没有后台服务、没有自启进程、没有需要维活的常驻东西。
+
+### 用量雷达（skill_monitor.py）——三种跑法
+
+| 方式 | 命令 | 场景 |
+|---|---|---|
+| **随取随用**（默认） | `python skill_monitor.py` | 想看报告时跑一下，跑完即退 |
+| **定时报告** | 计划任务 / cron：`python skill_monitor.py --top 20 >> usage-report.log` | 每周自动汇总，完全无人值守 |
+| **实时 watch**（前台，可选） | `python skill_monitor.py --watch 60` | 实时盯增量，Ctrl+C 即停，停了不丢数据 |
+
+一次性动作：`apply_skill_markers.py` 跑一次；之后每次 `npx skills update` 后
+重跑（更新会覆盖 SKILL.md、抹掉标记）。
+
+### 供应链闸门（skill_guard.py）——嵌进你的工作流
+
+```bash
+# 装网上找的技能之前——装前闸门
+python skill_guard.py scan https://github.com/someone/some-skills --strict
+
+# 装完之后（或第一次使用时）：给全部已装技能建基线
+python skill_guard.py audit
+
+# `npx skills update` 之后——合法更新也会触发 DRIFT，所以：
+python skill_guard.py audit --show-diff <skill>     # 到底改了什么？
+python skill_guard.py audit --accept-drift <skill>  # diff 没问题 → 重建基线
+
+# 无人值守巡检：抓新装技能、漂移、黑名单命中；有问题退出码 1
+python skill_guard.py audit --strict                # 挂进计划任务 / cron
+```
+
+典型节奏：装前 `scan`，每周定时 `audit --strict`，`--accept-drift` 只在你
+亲眼看过 diff 之后执行。
