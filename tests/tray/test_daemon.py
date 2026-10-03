@@ -81,6 +81,36 @@ def test_scan_changed_skill_reports_drift_and_bumps(tmp_path, monkeypatch):
     assert d.state.guard == "alert"
 
 
+def test_drift_then_ok_round_keeps_prev_hashes(tmp_path, monkeypatch):
+    # 审查第 1 轮 I-1（对齐 audit_roots 902-907 行口径）：DRIFT 确认后内容
+    # 不变再扫一轮（OK）必须透传 prev_hashes——否则该轮覆写条目时把
+    # prev_hashes 冲掉，状态仍透传 "drifted"、状态行仍指路 --show-diff，
+    # diff 却退化为空（inspect 通道被无变化轮询关闭；watch 一轮轮询即触发）
+    _redirect(tmp_path, monkeypatch)
+    pool = _pool(tmp_path); _register(pool, tmp_path, monkeypatch)
+    a = _mk_skill(pool, "a")
+    # 建初始基线（与 drift 测试同夹具：传 pool，audit_roots 以 root 为池枚举）
+    cfg = skill_guard.load_config()
+    snaps = skill_guard.load_snapshots()
+    skill_guard.audit_roots([str(pool)], RULES, "[]", snaps, cfg)
+    skill_guard.save_snapshots(snaps)
+    d = Daemon(roots=[str(pool)])
+    # 第一轮：改内容 → DRIFT，prev_hashes 留住 audit 落的最初基线
+    (a / "SKILL.md").write_text("# s changed", encoding="utf-8")
+    assert d.scan_changed_skill(str(a)) == "DRIFT"
+    # 第二轮：内容不变 → OK，status/prev_hashes 必须透传而非被覆写冲掉
+    assert d.scan_changed_skill(str(a)) == "OK"
+    s = skill_guard.load_snapshots()["skills"][str(a)]
+    assert s["status"] == "drifted"
+    assert "prev_hashes" in s
+    # --show-diff 语义（cmd_audit 同口径 base=prev_hashes, cur=hashes）：
+    # prev_hashes != hashes 且对它 diff 非空——若被冲掉则回落 s["hashes"]
+    # 自比得空 diff
+    assert s["prev_hashes"] != s["hashes"]
+    diff = skill_guard.diff_snapshot(s["prev_hashes"], s["hashes"])
+    assert diff["changed"] == ["SKILL.md"]
+
+
 def test_scan_new_skill_reports_new(tmp_path, monkeypatch):
     _redirect(tmp_path, monkeypatch)
     pool = _pool(tmp_path); _register(pool, tmp_path, monkeypatch)

@@ -126,7 +126,18 @@ class Daemon:
         # prev_hashes 语义与 audit_roots 一致：DRIFT 确认时留住被覆写的旧基线
         #（--show-diff 的 inspect 通道）；无变化轮次透传，防 drift 后一轮 OK 把它冲掉
         if status == "DRIFT" and old:
+            # old.get("prev_hashes", old["hashes"]) 保最初基线：连续多轮漂移（用户
+            # 改完又改、一直未 accept）时 diff 始终回溯到"自上次被审基线以来改了
+            # 什么"。与 audit_roots 897 行直接写 old["hashes"]（每轮 DRIFT 重置为上
+            # 一轮基线）口径不同——这是刻意的：daemon 是事件驱动的单技能切片，
+            # 一轮事件应报告累计未审漂移，audit 全量轮次间漂移归因逐轮滑动。
             entry["prev_hashes"] = old.get("prev_hashes", old["hashes"])
+        elif status == "OK" and old and "prev_hashes" in old:
+            # OK 轮次透传（对齐 audit_roots 902-907 行）：DRIFT 确认后内容不变的
+            # 再扫描不透传的话，本轮覆写条目即把 prev_hashes 冲掉——状态仍透传
+            # "drifted"、状态行仍指路 --show-diff，diff 却退化为空（--show-diff
+            # 回落 s["hashes"] 自比；watch 模式一轮轮询即触发）。
+            entry["prev_hashes"] = old["prev_hashes"]
         snaps["skills"][skill_path] = entry
         sg.save_snapshots(snaps)
 
