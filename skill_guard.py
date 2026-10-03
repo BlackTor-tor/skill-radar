@@ -446,8 +446,9 @@ def run_engine(root, rules, blocklist_text="[]", max_depth=5, repo=""):
 def main(argv=None):
     """scan/discover/audit 子命令 CLI。scan/audit 统一返回退出码（scan --strict 且有
     CRITICAL → 1；audit --strict 且 summary 有 DRIFT/NEW 行 → 1），不内部 raise
-    SystemExit；用户错误路径除外（与 argparse 口径一致）：discover --deep 未授权
-    consent、audit --show-diff/--accept-drift 的技能不在快照中，均 raise SystemExit。"""
+    SystemExit；用户错误路径除外（与 argparse 口径一致）：discover --deep / audit
+    --watch 未授权 consent、audit --show-diff/--accept-drift 的技能不在快照中，
+    均 raise SystemExit。"""
     import argparse
     ap = argparse.ArgumentParser(prog="skill-radar guard")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -477,9 +478,12 @@ def main(argv=None):
                          help="打印该技能当前内容与存储基线的 diff（不落盘）")
     p_audit.add_argument("--accept-drift", metavar="SKILL",
                          help="人工 inspect 后重建该技能的哈希基线（status 重置 baseline-unreviewed）")
+    p_audit.add_argument("--watch", type=int, metavar="SEC",
+                         help="轮询模式：每 SEC 秒审计一轮并落盘，只打印 NEW/DRIFT/CRITICAL 命中行"
+                              "（需 watch 授权：交互确认或 --yes；Ctrl+C 退出）")
     p_audit.add_argument("--json", action="store_true")
     p_audit.add_argument("--yes", action="store_true",
-                         help="预留给 --watch 轮询模式的非交互授权（后续任务接入）")
+                         help="非交互授权（--watch 轮询模式的 watch 授权；首次授权落盘）")
     args = ap.parse_args(argv)
     if args.cmd == "scan":
         tmp = None   # URL 分支克隆出的临时目录；本地路径保持 None，绝不被 rmtree
@@ -856,13 +860,35 @@ def _find_skill_entry(snaps, needle):
             return path, s
     raise SystemExit(f"skill not in snapshots: {needle}")
 
+def _watch_once(args, cfg, rules_text, bl_text, snaps):
+    """watch 轮询的单轮体（自 cmd_audit 循环抽出以便测试，无行为差异）：
+    当前注册根全量审计 → 快照与配置落盘（配置每轮幂等重写，口径同 discover
+    --deep 的授权落盘）→ 返回命中行：summary 展平为行后只保留 NEW/DRIFT 状态
+    行与 "  CRITICAL" finding 行（render_report 的 finding 行为两空格缩进）。
+    行级而非块级过滤是刻意的：summary 元素是多行报告块，块头只会是 NEW/DRIFT/OK，
+    块级 startswith("  CRITICAL") 恒不命中——未变化技能（OK 头）内的 CRITICAL
+    命中在轮询中将永久不可见，与「watch 只报变化与高危」语义相悖；展平成行后
+    CRITICAL 行、NEW/DRIFT 状态行一并进入输出（上限切片由调用方负责）。
+    args 形参当前未消费，保留以维持调用点签名稳定（watch 侧 --json 等输出
+    分支后续接入时无需改动调用方）。"""
+    roots = [r["path"] for r in cfg["roots"] if os.path.isdir(r["path"])]
+    summary = audit_roots(roots, rules_text, bl_text, snaps, cfg)
+    save_snapshots(snaps); save_config(cfg)
+    return [ln for ln in "\n".join(summary).splitlines()
+            if ln.startswith(("NEW", "DRIFT", "  CRITICAL"))]
+
 def cmd_audit(args):
-    """audit 子命令三路分支：
+    """audit 子命令分支：
     - --show-diff SKILL：当前内容快照哈希 vs 存储基线 → diff JSON 打印，**不落盘**；
     - --accept-drift SKILL：重建该技能哈希基线（哈希/scanned_at 取当前内容，
       status 重置 baseline-unreviewed——否则 drift 状态在 accept 后永久滞留，
       每次 audit 继续报 drifted，违背规格 §4「合法更新噪音不淹没」的初衷），
       落盘后返回 0；
+    - --watch SEC：consent 门控轮询——先 gate_consent("watch") + save_config
+      （首次授权落盘，已授权时幂等重写；未授权且非交互 → SystemExit），随后
+      每 SEC 秒执行一轮 _watch_once（审计 + 快照/配置落盘），只打印 NEW/DRIFT/
+      CRITICAL 命中行（[HH:MM:SS] 前缀，最多 5 条）；Ctrl+C 退出（KeyboardInterrupt
+      不捕获、不被 gate 的 (EOFError, OSError, ValueError) 异常网吞掉，原样穿透）；
     - 默认：audit_roots 全量审计 + save_snapshots + 打印 summary；--strict 且
       summary 有 DRIFT/NEW 行 → 1。"""
     cfg = load_config()
@@ -884,6 +910,17 @@ def cmd_audit(args):
         save_snapshots(snaps)
         print(f"re-baselined: {s['name']}")
         return 0
+    if args.watch:
+        cfg = gate_consent(cfg, "watch", args.yes)
+        save_config(cfg)   # 首次授权落盘（已授权时幂等重写，无损回读）
+        import time as _time
+        from datetime import datetime as _dt
+        print(f"watching every {args.watch}s, Ctrl+C to exit…", flush=True)
+        while True:
+            hits = _watch_once(args, cfg, rules_text, bl_text, snaps)
+            if hits:
+                print(f"[{_dt.now():%H:%M:%S}] " + " | ".join(hits[:5]), flush=True)
+            _time.sleep(args.watch)
     roots = [r["path"] for r in cfg["roots"] if os.path.isdir(r["path"])]
     summary = audit_roots(roots, rules_text, bl_text, snaps, cfg)
     save_snapshots(snaps)
