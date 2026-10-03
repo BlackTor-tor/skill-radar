@@ -471,5 +471,94 @@ def main(argv=None):
             return 1
     return 0
 
+# ---------------------------------------------------------------- 配置存储（roots 注册表 / consent / trust）
+
+HOME = os.path.expanduser("~")
+GUARD_DIR = os.path.join(HOME, ".skill-radar")
+CONFIG_NAME = os.path.join(GUARD_DIR, "config.yaml")
+SNAPSHOTS_NAME = os.path.join(GUARD_DIR, "snapshots.json")
+
+def _config_path():
+    """运行时从 GUARD_DIR 派生 config 路径。
+
+    模块级 CONFIG_NAME 是导入期常量（绑定当时的 HOME）；若函数直接引用它，
+    测试 monkeypatch skill_guard.GUARD_DIR 后读写仍落在真实用户目录——
+    既有污染真实配置的风险，也会让重定向失效。故运行时一律经此派生。"""
+    return os.path.join(GUARD_DIR, "config.yaml")
+
+def builtin_roots():
+    """内置技能根目录注册表（audit/discover 的扫描基线）。
+
+    路径统一正斜杠规范化：os.path.join 在 Windows 产生反斜杠，会使
+    path 形态依赖平台且 YAML 中易混淆；Python 的 os 函数在 Windows
+    上同样接受正斜杠。"""
+    return [{"path": os.path.join(HOME, d, "skills").replace(os.sep, "/"),
+             "builtin": True}
+            for d in (".agents", ".claude", ".codex", ".cursor", ".qoder-cn", ".zcode")]
+
+def _default_config():
+    return {"consent": {"deep_scan": False, "watch": False},
+            "roots": builtin_roots(),
+            "trust": {"owners": [], "repos": [], "hashes": []}}
+
+def load_config():
+    """读 config.yaml：文件缺失 → 默认配置；存在 → 默认值打底、文件值覆盖。
+
+    文件为 save_config 的对称格式：顶层列表，每个条目形如
+    ``- section: <名>`` 加一层键值（roots 每条记录一个条目）——这正是
+    load_yaml 子集原生支持的「顶层映射列表」语法（与规则/黑名单文件同构）。
+    手写映射形态（consent: ... 等）也接受，已知键直接覆盖。"""
+    path = _config_path()
+    if not os.path.isfile(path):
+        return _default_config()
+    data = load_yaml(open(path, encoding="utf-8").read())
+    cfg = {"consent": {}, "roots": [], "trust": {}}
+    if isinstance(data, list):
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            sec = item.get("section")
+            body = {k: v for k, v in item.items() if k != "section"}
+            if sec == "roots":
+                cfg["roots"].append(body)
+            elif sec in cfg and isinstance(cfg[sec], dict):
+                cfg[sec].update(body)
+    elif isinstance(data, dict):
+        for k, v in data.items():
+            if k in cfg and v is not None:
+                cfg[k] = v
+    merged = _default_config()
+    # 以真值过滤：文件中缺失/为空的 section 不覆盖对应默认值
+    #（save_config 恒写全三节，故对其产物与「非 None 即覆盖」等价）。
+    merged.update({k: v for k, v in cfg.items() if v})
+    return merged
+
+def save_config(cfg):
+    """将 config 结构序列化为 load_yaml 可无损回读的对称子集并落盘。
+
+    结构契约：consent/trust 为一层映射（各写一个 section 条目）；
+    roots 为 {path, builtin} 记录列表（每条一个 section 条目）。
+    只服务该结构，不是通用 YAML 序列化器。"""
+    os.makedirs(GUARD_DIR, exist_ok=True)
+    def dump(v):   # 标量/内联列表 → load_yaml._scalar 可回读的形态
+        if isinstance(v, bool): return "true" if v else "false"
+        if isinstance(v, int): return str(v)
+        if isinstance(v, list): return "[" + ", ".join(dump(x) for x in v) + "]"
+        return str(v)
+    lines = []
+    for section, val in cfg.items():
+        if isinstance(val, dict):
+            lines.append(f"- section: {section}")
+            for k2, v2 in val.items():
+                lines.append(f"  {k2}: {dump(v2)}")
+        elif isinstance(val, list):
+            for item in val:
+                if not isinstance(item, dict):
+                    continue
+                lines.append(f"- section: {section}")
+                for k2, v2 in item.items():
+                    lines.append(f"  {k2}: {dump(v2)}")
+    open(_config_path(), "w", encoding="utf-8").write("\n".join(lines) + "\n")
+
 if __name__ == "__main__":
     sys.exit(main())
