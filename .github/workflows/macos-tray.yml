@@ -1,0 +1,57 @@
+# macOS 构建与测试（GitHub 托管 runner = Apple 硬件，公共仓库免费分钟数）
+# 产出 dist/SkillRadarTray.app 与 dist/SkillRadarTray.dmg（artifact 下载）；
+# 并跑全量测试套件（Windows 专属用例自动 skip）。
+# 真机 GUI 验收清单见 docs/plans/2026-10-03-v2.2-tray-acceptance-mac.md（runner 无交互桌面）。
+name: macos-tray
+
+on:
+  push:
+    branches: [main]
+    paths: ['tray/**', 'skill_guard.py', 'skill_add.py', 'skill_report.py', 'skill_monitor.py', 'rules/**', 'requirements-gui.txt', 'build_tray.py', '.github/workflows/macos-tray.yml']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-gui.txt
+          pip install pytest
+
+      - name: Run test suite
+        run: python -m pytest tests -q
+
+      - name: Build .app + dmg
+        run: python build_tray.py
+
+      - name: Smoke — frozen imports & resources
+        run: |
+          python - <<'EOF'
+          import os, zipfile, glob
+          # onefile 未启用（mac 走 windowed .app），直接核对 bundle 内数据文件
+          app = "dist/SkillRadarTray.app"
+          assert os.path.isdir(app), "missing .app bundle"
+          hits = glob.glob(os.path.join(app, "**", "index.html"), recursive=True)
+          assert hits, "tray/web/index.html not bundled"
+          rules = glob.glob(os.path.join(app, "**", "defaults.yaml"), recursive=True)
+          assert rules, "rules/defaults.yaml not bundled"
+          dmg = "dist/SkillRadarTray.dmg"
+          assert os.path.isfile(dmg) and os.path.getsize(dmg) > 1_000_000, "dmg missing/too small"
+          print("bundle OK:", hits[0], "|", rules[0], "| dmg bytes:", os.path.getsize(dmg))
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SkillRadarTray-macos
+          path: |
+            dist/SkillRadarTray.app
+            dist/SkillRadarTray.dmg
+          retention-days: 14
