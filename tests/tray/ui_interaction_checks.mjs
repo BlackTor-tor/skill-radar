@@ -277,6 +277,11 @@ try {
         'Closing after a state refresh must focus the replacement skill row');
     });
     await check('drawer_locks_background_scroll', async () => {
+      const browserInfo = await cdp('Browser.getVersion');
+      await evaluate(`window.__scroll_events = []; document.addEventListener('wheel', e => {
+        window.__scroll_events.push({target:e.target.id,delta:e.deltaY,trusted:e.isTrusted});
+      }, {passive:true});`);
+      try {
       await click('nav.sidebar button[data-screen="security"]');
       // Add enough records to make the real background scroll container scrollable.
       await evaluate(`(() => {
@@ -304,6 +309,17 @@ try {
       await waitFor(`document.getElementById('main-content').scrollTop > ${before}`);
       assert(await evaluate(`document.getElementById('main-content').scrollTop`) > before,
         'Closing the drawer must restore wheel scrolling in the main content');
+      } catch (error) {
+        const diagnostic = await evaluate(`(() => {
+          const main=document.getElementById('main-content'), r=main.getBoundingClientRect();
+          return {viewport:[innerWidth,innerHeight],main:{top:main.scrollTop,
+            height:main.clientHeight,scrollHeight:main.scrollHeight,rect:r.toJSON(),
+            overflow:getComputedStyle(main).overflowY},target:document.elementFromPoint(300,400)?.outerHTML.slice(0,200),
+            drawerHidden:document.getElementById('drawer').hidden,
+            inert:document.getElementById('app-layout').inert,wheels:window.__scroll_events};
+        })()`);
+        throw new Error(error.message+'; scroll diagnostics: '+JSON.stringify({browser:browserInfo,...diagnostic}));
+      }
     });
     await check('drawer_background_locked', async () => {
       await open();
