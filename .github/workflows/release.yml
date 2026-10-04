@@ -1,0 +1,82 @@
+# 版本发布：push tag（如 v2.2.0）触发 → 双平台构建 → 自动创建 GitHub Release
+# 并挂上 SkillRadarTray.exe（Windows）与 SkillRadarTray.app/.dmg（macOS）。
+# 手动触发（workflow_dispatch）只构建、不发布（release 步骤带 [skip-release] 守卫）。
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write   # 创建 Release 所需（显式声明，最小权限）
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-gui.txt
+          pip install pytest
+      - run: python -m pytest tests -q
+      - run: python build_tray.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SkillRadarTray-windows
+          path: dist/SkillRadarTray.exe
+          retention-days: 14
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-gui.txt
+          pip install pytest
+      - run: python -m pytest tests -q
+      - run: python build_tray.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SkillRadarTray-macos
+          path: |
+            dist/SkillRadarTray.app
+            dist/SkillRadarTray.dmg
+          retention-days: 14
+
+  publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts }
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          cp artifacts/SkillRadarTray-windows/SkillRadarTray.exe release/
+          cd artifacts/SkillRadarTray-macos
+          zip -qry "${{ github.workspace }}/release/SkillRadarTray-macos.zip" SkillRadarTray.app
+          cp SkillRadarTray.dmg "${{ github.workspace }}/release/"
+          ls -la "${{ github.workspace }}/release"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/SkillRadarTray.exe
+            release/SkillRadarTray.dmg
+            release/SkillRadarTray-macos.zip
+          body: |
+            skill-radar ${{ github.ref_name }}
+
+            - **SkillRadarTray.exe** — Windows 托盘守护（onefile，双击即用）
+            - **SkillRadarTray.dmg / SkillRadarTray-macos.zip** — macOS 托盘守护
+              （未签名/未公证：首次打开需右键 → 打开，见 README；.zip 供 Gatekeeper 对 .app 的右键流程）
+            - CLI（scan / audit / add 网关 / report）不在包内：以源码运行（零依赖），见 README 快速开始
+
+            变更日志见本 tag 与 main 的对比。
