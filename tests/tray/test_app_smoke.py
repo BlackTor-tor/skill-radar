@@ -65,7 +65,8 @@ def test_build_daemon_wires_on_block(tmp_path, monkeypatch):
     calls, toasts = [], []
     monkeypatch.setattr(app_mod.alerts, "quarantine_skill",
                         lambda p, allowed_roots: calls.append((p, allowed_roots)) or dest)
-    monkeypatch.setattr(app_mod.alerts, "toast", lambda t, m: toasts.append((t, m)))
+    monkeypatch.setattr(app_mod.alerts, "toast",
+                        lambda t, m, notify=None: toasts.append((t, m)))
     daemon.on_block(str(pool / "demo"), object())
     assert calls == [(str(pool / "demo"), daemon.roots)]   # allowed_roots 传守护根
     assert toasts and "已隔离" in toasts[0][0]

@@ -73,6 +73,30 @@ def test_toast_text_sanitized():
     assert "\u200b" not in got and "\ufeff" not in got
 
 
+def test_toast_failure_falls_back_to_notify(monkeypatch):
+    """终审 M-4：平台子进程路径失败（OSError 或非零返回码）时降级 notify(t, m)；
+    notify=None（默认）时静默兜底不炸。monkeypatch 掉 subprocess.run，不真跑。"""
+    monkeypatch.setattr(alerts.sys, "platform", "win32")
+    got = []
+
+    def boom(*a, **kw):
+        raise OSError("powershell missing")
+
+    monkeypatch.setattr(alerts.subprocess, "run", boom)
+    toast("t1", "m1", notify=lambda t, m: got.append((t, m)))
+    assert got == [("t1", "m1")]              # 降级回调被调，参数为清洗后文案
+    assert toast("t2", "m2") == "t2m2"        # notify 缺省：静默，不抛
+
+    got.clear()
+
+    def nonzero(argv, **kw):
+        return subprocess.CompletedProcess(argv, 1)
+
+    monkeypatch.setattr(alerts.subprocess, "run", nonzero)
+    toast("t3", "m3", notify=lambda t, m: got.append((t, m)))
+    assert got == [("t3", "m3")]              # 非零返回码同走降级
+
+
 def test_win_toast_script_carries_text_and_quotes(monkeypatch):
     """Windows toast 脚本四要素齐 + t/m 已插值且单引号被转义。
     monkeypatch 截获 subprocess.run 参数——不真跑 powershell。"""

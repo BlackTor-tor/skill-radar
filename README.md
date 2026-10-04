@@ -156,6 +156,9 @@ open with a loud warning. One-line accelerator:
     # PowerShell
     function skills { python F:\path\to\skill_guard.py add -- skills @args }
 
+Note: `--block` is claimed by the gateway; pass skills-CLI flags after the
+source (or after `--`).
+
 ### SkillRadar Tray (v2.2, Windows + macOS)
 
 The optional tray daemon watches all registered skill roots in real time
@@ -328,6 +331,8 @@ fail-open 放行。一行加速器：
     alias skills='python /path/to/skill_guard.py add -- skills'
     # PowerShell
     function skills { python F:\path\to\skill_guard.py add -- skills @args }
+
+注意：`--block` 由网关占用——skills CLI 的旗标请写在安装源之后（或 `--` 之后）。
 
 ### SkillRadar 托盘（v2.2，Windows + macOS）
 

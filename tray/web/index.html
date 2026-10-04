@@ -54,7 +54,7 @@ tbody tr:hover { background: oklch(0.97 0.005 240); }
          padding: 1px 8px; border-radius: 999px; }
 .badge.crit { background: var(--color-error); color: white; }
 .badge.warn { background: var(--color-warning); color: oklch(0.2 0.05 80); }
-.badge.ok   { background: var(--color-success); color: white; }
+.badge.ok   { background: var(--color-success); color: oklch(0.18 0.05 145); }
 .bar { background: oklch(0.93 0.005 240); border-radius: 3px; height: 14px; }
 .bar > span { display: block; height: 100%; border-radius: 3px;
               background: var(--color-primary); }
@@ -72,10 +72,13 @@ tbody tr:hover { background: oklch(0.97 0.005 240); }
 .settings-row { display: flex; justify-content: space-between; align-items: center;
                 padding: 14px 0; border-bottom: 1px solid var(--color-border);
                 max-width: 70ch; }
-.switch { width: 44px; height: 24px; border-radius: 999px; background: oklch(0.9 0.005 240);
-          position: relative; cursor: pointer; transition: background-color 200ms ease-out; }
-.switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 20px;
-                 height: 20px; border-radius: 50%; background: white;
+/* 任务 6 Minor：开关放大到 48x28（触摸目标≥44px 宽，行高由 .settings-row
+   padding 保证）；knob 22px、translateX(20px) 后左右各余 3px，视觉居中 */
+.switch { width: 48px; height: 28px; border-radius: 999px; background: oklch(0.9 0.005 240);
+          position: relative; cursor: pointer; min-width: 48px;
+          transition: background-color 200ms ease-out; }
+.switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 22px;
+                 height: 22px; border-radius: 50%; background: white;
                  transition: transform 200ms ease-out; }
 .switch.on { background: var(--color-primary); }
 .switch.on::after { transform: translateX(20px); }
@@ -339,7 +342,7 @@ async function runDrawerAction(name, label){
   toast(label + ' …');
   const r = await act(name, { skill: DRAWER_SKILL });
   if (r && r.ok) { drawerPre(r.output); toast(label + ' 完成 done'); }
-  else { toast(label + ' 失败 failed: ' + ((r && r.error) || '未知错误')); }
+  else { toast(label + ' 失败 failed: ' + ((r && r.error) || (r && r.output) || '未知错误')); }
 }
 /* ---- toast ---- */
 let TOAST_T = null;

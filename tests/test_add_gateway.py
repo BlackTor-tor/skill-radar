@@ -98,6 +98,17 @@ def test_resolve_mode_warn_never_gates(tmp_path, monkeypatch):
     assert mode == "warn" and rest == ["a/b"]
     assert skill_guard.load_config()["consent"].get("add_block") is not True
 
+
+def test_cmd_add_usage_error_persists_nothing(tmp_path, monkeypatch, capsys):
+    # 终审 M-1：`add --block`（无安装源 → 用法错误 rc=2）不得静默持久化
+    # consent.add_block——参数先校验后持久化（persist_block_mode 在用法
+    # 检查之后才调）。
+    _redirect_home(tmp_path, monkeypatch)
+    rc = skill_add.cmd_add(["--block"])
+    assert rc == 2
+    assert skill_guard.load_config()["consent"].get("add_block") is not True
+    assert "usage:" in capsys.readouterr().err
+
 # ------------------------------------------------- 任务 3：转调 + 编排
 # run_install 全部打桩（不真调 npx）；克隆用本地 .git 目录仓库（同 test_scan_url 手法）
 

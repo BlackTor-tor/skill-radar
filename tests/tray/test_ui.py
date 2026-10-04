@@ -46,7 +46,7 @@ def test_anti_patterns_absent():
 def test_motion_and_a11y_commitments():
     html = _read()
     assert "prefers-reduced-motion" in html
-    assert "44" in html and "min-height" in html.replace("min-height", "min-height")   # 触摸目标
+    assert "min-height: 44px" in html   # 触摸目标（nav 侧栏按钮内联尺寸钉住）
     assert "ease-out" in html
     # transform/opacity-only 动效：transition 里不得出现 left/top/width/height
     import re

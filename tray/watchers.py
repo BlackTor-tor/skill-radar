@@ -12,7 +12,6 @@ except ImportError:          # 非 Windows 平台无此模块，占位类不触�
     pass
 
 FILE_LIST_DIRECTORY = 0x0001
-INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 
 
 class WatchUnavailable(Exception):
@@ -44,7 +43,11 @@ class ReadDirectoryChangesWatcher:
                             None, 3,  # OPEN_EXISTING
                             0x02000000,  # FILE_FLAG_BACKUP_SEMANTICS（目录必需）
                             None)
-        if h in (INVALID_HANDLE_VALUE, None, 0):
+        # 失败哨兵：k32 经 windll 取到时 restype 为默认 c_int，64 位句柄被
+        # 截断后 INVALID_HANDLE_VALUE（0xFFFF...F）落成 -1——与整型 -1 比较
+        # 才能命中（同 0/NULL 一并覆盖；不设 restype=c_void_p 以免牵动后续
+        # 句柄传参类型，见 stop() 的 CloseHandle 口径）。
+        if h in (-1, None, 0):
             return
         with self._lock:
             self._handles.append(h)
@@ -68,7 +71,7 @@ class ReadDirectoryChangesWatcher:
                     name = raw[off + 12: off + 12 + plen].decode("utf-16-le",
                                                                  errors="ignore")
                     # 事件合并守则：改名成对到达（旧名+新名），一律投新名
-                    if action != 4:   # 4 = FILE_ACTION_REMOVED_OLD_NAME
+                    if action != 4:   # 4 = FILE_ACTION_RENAMED_OLD_NAME
                         self.callback(os.path.join(root, name))
                 if nxt == 0:
                     break

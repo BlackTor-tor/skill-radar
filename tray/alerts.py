@@ -52,26 +52,36 @@ def _applescript_quote(s):
     return s.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def toast(title, msg, _capture=False):
+def toast(title, msg, _capture=False, notify=None):
     """跨平台 Toast：Windows 走 PowerShell WinRT 兼容层，macOS 走 osascript；
-    失败静默（调用方有托盘徽标兜底）。文案过 _sanitize（规格 §5）。
+    平台子进程路径整体包 try——OSError/SubprocessError 或非零返回码时降级：
+    notify 可调用则以 (title, msg) 回调（壳层接 pystray 图标气泡，终审 M-4），
+    之后兜底静默（托盘徽标照常兜底），绝不向调用方抛。文案过 _sanitize（规格 §5）。
     _capture=True 仅供测试：返回清洗后的 (title, msg) 拼接，不真弹。"""
     t = sg._sanitize(title)
     m = sg._sanitize(msg)
     if _capture:
         return t + m
     try:
+        proc = None
         if sys.platform == "win32":
-            subprocess.run(["powershell", "-NoProfile", "-Command",
-                            _win_toast_ps(t, m)],
-                           timeout=10, capture_output=True)
+            proc = subprocess.run(["powershell", "-NoProfile", "-Command",
+                                   _win_toast_ps(t, m)],
+                                  timeout=10, capture_output=True)
         elif sys.platform == "darwin":
-            subprocess.run(["osascript", "-e",
-                            f'display notification "{_applescript_quote(m)}"'
-                            f' with title "{_applescript_quote(t)}"'],
-                           timeout=10, capture_output=True)
+            proc = subprocess.run(["osascript", "-e",
+                                   f'display notification "{_applescript_quote(m)}"'
+                                   f' with title "{_applescript_quote(t)}"'],
+                                  timeout=10, capture_output=True)
+        if proc is not None and proc.returncode != 0:
+            raise subprocess.SubprocessError(
+                f"toast subprocess exit {proc.returncode}")
     except (OSError, subprocess.SubprocessError):
-        pass
+        if callable(notify):
+            try:
+                notify(t, m)
+            except Exception:
+                pass   # 降级通道再失败：静默（托盘徽标兜底）
     return t + m
 
 

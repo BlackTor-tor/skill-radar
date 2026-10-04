@@ -193,8 +193,10 @@ class JsBridge:
 
 
 def build_runtime(roots, mode):
-    """装配守护运行时（监听打桩由 _install_gui_stubs 控制；测试直调本函数）。"""
-    state = TrayState()
+    """装配守护运行时（监听打桩由 _install_gui_stubs 控制；测试直调本函数）。
+    终审 M-3：TrayState 落盘 ~/.skill-radar/tray_state.json——托盘重启后
+    今日计数/事件/守护态不断档（坏文件静默回默认）。"""
+    state = TrayState(path=os.path.join(sg.GUARD_DIR, "tray_state.json"))
     daemon = Daemon(roots=roots, mode=mode, state=state)
     runtime = types.SimpleNamespace(icon=None, window=None, watcher=None)
     bridge = JsBridge(daemon, state, runtime)
@@ -202,18 +204,31 @@ def build_runtime(roots, mode):
     def _on_block(skill_path, rep):
         verdict = "CRITICAL"
         cfg = sg.load_config()
+
+        def _icon_notify(t, m):
+            # 终审 M-4：toast 子进程路径失败时的降级回调——pystray 图标气泡。
+            # pystray notify(message, title) 签名（message 在前）；icon 未就绪
+            # 或后端再失败时静默，托盘徽标照常兜底。
+            if runtime.icon:
+                try:
+                    runtime.icon.notify(m, t)
+                except Exception:
+                    pass
+
         if cfg.get("consent", {}).get("quarantine"):
             dest = alerts.quarantine_skill(skill_path, allowed_roots=daemon.roots)
             alerts.toast("skill-radar 已隔离技能",
                          f"{os.path.basename(skill_path)}（{verdict}）"
-                         if dest else f"隔离失败，请人工处理 {skill_path}")
+                         if dest else f"隔离失败，请人工处理 {skill_path}",
+                         notify=_icon_notify)
             # 事件文案与 toast 同口径：隔离失败如实记，不伪造"已隔离 → None"
             if dest:
                 state.add_event("quarantine", f"已隔离 {skill_path} → {dest}")
             else:
                 state.add_event("quarantine", f"隔离失败，请人工处理 {skill_path}")
         else:
-            alerts.toast("skill-radar 检出 CRITICAL", f"{os.path.basename(skill_path)}")
+            alerts.toast("skill-radar 检出 CRITICAL", f"{os.path.basename(skill_path)}",
+                         notify=_icon_notify)
 
     daemon.on_block = _on_block
 

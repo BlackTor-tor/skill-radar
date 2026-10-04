@@ -9,9 +9,11 @@ import build_tray
 def test_pyinstaller_args_windows(monkeypatch):
     monkeypatch.setattr(build_tray.sys, "platform", "win32")
     cmd = build_tray.pyinstaller_cmd()
+    joined = " ".join(cmd)
     assert "--onefile" in cmd and "--windowed" in cmd
-    assert "tray/app.py" in " ".join(cmd).replace("\\", "/")
-    assert "--add-data" in " ".join(cmd)   # web/index.html 必须随包
+    assert "tray/app.py" in joined.replace("\\", "/")
+    # add-data 两个数据目录都在场（web/index.html 与 rules/ 必须随包）
+    assert "--add-data" in joined and "tray/web" in joined and "rules" in joined
 
 
 def test_pyinstaller_args_macos(monkeypatch):
@@ -19,6 +21,8 @@ def test_pyinstaller_args_macos(monkeypatch):
     cmd = build_tray.pyinstaller_cmd()
     joined = " ".join(cmd)
     assert "--windowed" in joined and "--onefile" not in joined   # .app 形态
+    # add-data 双数据目录（win 分支同口径）
+    assert "--add-data" in joined and "tray/web" in joined and "rules" in joined
 
 
 def test_dmg_command_macos(monkeypatch):

@@ -56,14 +56,25 @@ def extract_target(argv):
     return None, None, ""
 
 
-def resolve_mode(argv, cfg):
-    """拦截/警告模式（设计裁定 2）：--block 或已持久化 consent.add_block → block。
-    --block 首次出现即经 gate_consent(yes_flag=True) 写入并落盘（gate_consent 复用，
-    规格 §1a）；警告模式永不经过 consent 门。返回 (透传参数, mode)。"""
-    rest, block = split_gateway_flags(argv)
-    if block and not sg.check_consent(cfg, "add_block"):
+def persist_block_mode(cfg, block_flag):
+    """持久化拦截模式授权（终审 M-1 从 resolve_mode 拆出的独立步骤）：
+    仅当 block_flag 且未授权时经 gate_consent(cfg, "add_block", True) 写入
+    并落盘（gate_consent 复用，规格 §1a）；警告模式/已授权原样返回不落盘。
+    独立成函数是为了让 cmd_add 能把「参数校验」排在「持久化」之前——
+    用法错误（无安装源）不得静默把拦截模式写进 config。返回（可能补写
+    授权的）cfg。"""
+    if block_flag and not sg.check_consent(cfg, "add_block"):
         cfg = sg.gate_consent(cfg, "add_block", True)
         sg.save_config(cfg)
+    return cfg
+
+
+def resolve_mode(argv, cfg):
+    """拦截/警告模式（设计裁定 2）：--block 或已持久化 consent.add_block → block。
+    持久化经 persist_block_mode（--block 首次出现即落盘）；警告模式永不经过
+    consent 门。返回 (透传参数, mode)。"""
+    rest, block = split_gateway_flags(argv)
+    cfg = persist_block_mode(cfg, block)
     mode = "block" if (block or sg.check_consent(cfg, "add_block")) else "warn"
     return rest, mode
 
@@ -104,16 +115,20 @@ def baseline_new_skills():
 
 
 def cmd_add(argv):
-    """网关编排（规格 §1a 1-5 步）。返回退出码：拦截拒绝=1；其余=npx 透传码。"""
+    """网关编排（规格 §1a 1-5 步）。返回退出码：拦截拒绝=1；其余=npx 透传码。
+    终审 M-1：参数先校验后持久化——用法错误（无安装源，rc=2）在任何
+    consent 落盘之前返回，`add --block`（裸旗标）不再静默持久化拦截模式。"""
     cfg = sg.load_config()
-    rest, mode = resolve_mode(argv, cfg)
+    rest, block = split_gateway_flags(argv)
     rest = strip_passthrough_prefix(rest)
     token, url, repo = extract_target(rest)
+    if not rest:
+        print("usage: skill_guard.py add [--block] -- <npx skills add 参数...>",
+              file=sys.stderr)
+        return 2
+    cfg = persist_block_mode(cfg, block)
+    mode = "block" if (block or sg.check_consent(cfg, "add_block")) else "warn"
     if url is None:
-        if not rest:
-            print("usage: skill_guard.py add [--block] -- <npx skills add 参数...>",
-                  file=sys.stderr)
-            return 2
         print("[skill-radar] 未识别到可扫描的安装源，直接透传（不扫描）")
         return run_install(rest)
 

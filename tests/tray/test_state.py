@@ -1,5 +1,5 @@
 # tests/tray/test_state.py — 任务 1：托盘状态机 + 环形事件日志 + 今日计数
-from datetime import datetime, timedelta
+from datetime import datetime
 from tray.state import TrayState, MAX_EVENTS, today_key
 
 
@@ -81,3 +81,32 @@ def test_snapshot_skills_record_and_deep_copy():
     snap["today"][today_key()]["new"] = 999
     assert st.skills["C:/pool/a"]["score"] == 18
     assert st.today[today_key()]["new"] == 1
+
+
+def test_path_persistence_roundtrip(tmp_path):
+    # 终审 M-3：可选 path 持久化——bump/add_event/set_guard 后原子落盘，
+    # 第二个实例恢复 today 计数 / 事件 / 守护态；默认 path=None 纯内存。
+    p = tmp_path / "tray_state.json"
+    st = TrayState(path=str(p))
+    st.bump("new")
+    st.bump("new")
+    st.add_event("scan", "hello")
+    st.set_guard("alert")
+    assert p.is_file()
+    st2 = TrayState(path=str(p))
+    assert st2.today[today_key()]["new"] == 2
+    assert st2.events[0][1] == "hello"
+    assert st2.guard == "alert" and st2.paused is False
+
+
+def test_path_bad_json_silently_falls_back(tmp_path):
+    # 终审 M-3：坏 JSON（或缺文件）静默回默认值——便利层损坏不得炸守护。
+    p = tmp_path / "tray_state.json"
+    p.write_text("{not-json", encoding="utf-8")
+    st = TrayState(path=str(p))
+    assert st.guard == "running"
+    assert st.today == {today_key(): {"new": 0, "drift": 0, "block": 0}}
+    assert st.events == []
+    st.bump("block")   # 坏文件后写入路径仍工作（覆盖为合法状态）
+    st2 = TrayState(path=str(p))
+    assert st2.today[today_key()]["block"] == 1
