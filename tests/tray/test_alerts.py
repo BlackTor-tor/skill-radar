@@ -1,12 +1,26 @@
 # tests/tray/test_alerts.py — 任务 3：Toast 文案清洗、隔离路径校验、恢复说明
 import os
 import subprocess
+import shlex
 
 import pytest
 
 import skill_guard
 from tray import alerts
 from tray.alerts import quarantine_skill, restore_command, toast
+
+
+def test_posix_restore_instruction_quotes_untrusted_paths(tmp_path, monkeypatch):
+    _redirect(tmp_path, monkeypatch)
+    pool = tmp_path / "pool"
+    skill = pool / "$(echo unsafe)`echo unsafe`'skill"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("# test", encoding="utf-8")
+    dest = quarantine_skill(str(skill), [str(pool)])
+    note = open(os.path.join(dest, "RESTORE.txt"), encoding="utf-8").read()
+    expected = f"mv -- {shlex.quote(dest)} {shlex.quote(str(skill))}"
+    assert expected in note
+    assert shlex.split(expected) == ["mv", "--", dest, str(skill)]
 
 
 def _redirect(tmp_path, monkeypatch):

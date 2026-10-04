@@ -8,6 +8,7 @@ import os
 import threading
 import time
 from datetime import datetime
+from dataclasses import asdict
 
 import skill_guard as sg
 
@@ -31,9 +32,11 @@ class Daemon:
         self.state.watched_roots = len(self.roots)
         self._dirty = {}          # normpath → (稳定时间戳, last_event_ts)
         self._lock = threading.Lock()
+        self.scan_lock = threading.RLock()   # 与 UI 接受漂移共享快照读改写锁。
         self._stop = threading.Event()
         self.consume_thread = None   # app 层把 consume 线程句柄回挂于此（join 用）
         self.on_block = lambda skill_path, rep: None
+        self.on_alert = lambda skill_path, rep, status: None
         base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.rules_text = rules_text if rules_text is not None else \
             self._read(os.path.join(base, "rules", "defaults.yaml"))
@@ -70,7 +73,7 @@ class Daemon:
         p = os.path.normpath(os.path.abspath(path))
         while True:
             parent = os.path.dirname(p)
-            if os.path.isfile(os.path.join(p, "SKILL.md")):
+            if sg._is_skill_dir(p):
                 if any(self._under(p, r) for r in self.roots):
                     return p
                 return None
@@ -80,9 +83,9 @@ class Daemon:
 
     @staticmethod
     def _under(child, root):
-        c = sg._canon_path(child)
-        r = sg._canon_path(root)
-        return c.startswith(r + "/")
+        c = sg._canon_path(os.path.realpath(child))
+        r = sg._canon_path(os.path.realpath(root))
+        return c == r or c.startswith(r + "/")
 
     # ---- 增量扫描（扫描线程调用；异常全包，规格 §5）----
 
@@ -93,7 +96,8 @@ class Daemon:
         既无意义还会让下轮 audit 按快照语义残留幽灵条目；warn 模式的 CRITICAL
         不隔离、照常落基线（audit 增量闭环不因模式分叉）。"""
         try:
-            return self._scan_once(skill_path)
+            with self.scan_lock:
+                return self._scan_once(skill_path)
         except Exception as e:   # 扫描异常不崩守护（规格 §5）
             self.state.add_event("error", f"扫描异常 {skill_path}: {e}")
             return "ERROR"
@@ -101,7 +105,10 @@ class Daemon:
     def _scan_once(self, skill_path):
         cfg = sg.load_config()
         rules = sg.parse_rules(self.rules_text)
-        trusted = sg._is_trusted(cfg, skill_path)
+        import hashlib
+        body = sg._read_regular_file(os.path.join(skill_path, "SKILL.md"), sg.MAX_HASH_FILE_BYTES)
+        trusted = sg._is_trusted(cfg, skill_path,
+                                 hashlib.sha256(body).hexdigest() if body is not None else "")
         rep = sg.run_engine(skill_path, rules, self.blocklist_text)
         rep.findings = sg.apply_trust(rep.findings, trusted)
         rep.score = sg.score_findings(rep.findings)
@@ -109,11 +116,10 @@ class Daemon:
         has_crit = any(f.severity == "CRITICAL" for f in rep.findings)
         if has_crit and self.mode == "block":
             self.state.bump("block")
-            self.state.set_guard("quarantine")
+            self.state.set_guard("alert")   # 成功隔离由 app 钩子升级为 quarantine。
             self.state.add_event("block", f"CRITICAL 拦截 {skill_path}")
             # 终审 I-3：BLOCK 分支也进 Security 屏数据（快照不落，state 直写）
-            self.state.record_skill(skill_path, os.path.basename(skill_path),
-                                    rep.score, "blocked")
+            self._record_report(skill_path, rep, "blocked")
             self.on_block(skill_path, rep)
             return "BLOCK"
 
@@ -137,9 +143,7 @@ class Daemon:
         if status == "DRIFT" and old:
             # old.get("prev_hashes", old["hashes"]) 保最初基线：连续多轮漂移（用户
             # 改完又改、一直未 accept）时 diff 始终回溯到"自上次被审基线以来改了
-            # 什么"。与 audit_roots 897 行直接写 old["hashes"]（每轮 DRIFT 重置为上
-            # 一轮基线）口径不同——这是刻意的：daemon 是事件驱动的单技能切片，
-            # 一轮事件应报告累计未审漂移，audit 全量轮次间漂移归因逐轮滑动。
+            # 什么"。与 audit_roots 的累计未审漂移口径一致。
             entry["prev_hashes"] = old.get("prev_hashes", old["hashes"])
         elif status == "OK" and old and "prev_hashes" in old:
             # OK 轮次透传（对齐 audit_roots 902-907 行）：DRIFT 确认后内容不变的
@@ -161,9 +165,20 @@ class Daemon:
         # 终审 I-3：成功路径（NEW/DRIFT/OK）把 name/score/status 写进 Security
         # 屏数据源；status 用快照条目口径（NEW→baseline-unreviewed、DRIFT→drifted、
         # OK 透传旧值），UI 的建议列由 status+score 推导
-        self.state.record_skill(skill_path, entry["name"], rep.score,
-                                entry["status"])
+        self._record_report(skill_path, rep, entry["status"])
+        if status in ("NEW", "DRIFT") or has_crit:
+            self.state.set_guard("alert")
+            self.on_alert(skill_path, rep, status)
         return status
+
+    def _record_report(self, skill_path, rep, status):
+        """风险表与 CLI 报告共用安装建议，明细只传纯 JSON 数据。"""
+        from skill_report import install_verdict
+        advice, _, reason = install_verdict(rep, status)
+        self.state.record_skill(skill_path, os.path.basename(skill_path),
+                                rep.score, status,
+                                sg._sanitize_json([asdict(f) for f in rep.findings]),
+                                advice, sg._sanitize(reason))
 
     # ---- 扫描线程主循环（app 层起线程跑）----
 
@@ -178,13 +193,28 @@ class Daemon:
                     if stable_at <= now:
                         due.append(p)
                         del self._dirty[p]
+            scanned = set()
             for p in due:
                 if self.state.paused:
                     self.state.add_event("skip", f"守护暂停，跳过 {p}")
                     continue
                 skill = self.locate_changed_skill(p)
                 if skill:
-                    self.scan_changed_skill(skill)
+                    if skill not in scanned:
+                        scanned.add(skill)
+                        self.scan_changed_skill(skill)
+                elif os.path.isdir(p) and any(
+                        sg._canon_path(p) == sg._canon_path(r) or self._under(p, r)
+                        for r in self.roots):
+                    # 原子目录安装、缺失根重现、RDCW 溢出可能只给目录事件。
+                    # 目录事件需向下枚举技能，普通文件事件仍走单技能增量。
+                    try:
+                        for child in sg.iter_skill_dirs([p]):
+                            if child not in scanned:
+                                scanned.add(child)
+                                self.scan_changed_skill(child)
+                    except Exception as e:
+                        self.state.add_event("error", f"目录补扫异常 {p}: {e}")
             self._stop.wait(0.5)
 
     def stop(self):

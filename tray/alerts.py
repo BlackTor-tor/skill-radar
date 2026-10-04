@@ -2,6 +2,7 @@
 # 唯一写盘动作（快照/配置写入均落在 ~/.skill-radar 数据目录））
 import os
 import shutil
+import shlex
 import subprocess
 import sys
 from datetime import datetime
@@ -98,7 +99,17 @@ def quarantine_skill(skill_path, allowed_roots):
        双侧 normcase + normpath 后前缀比较——Windows 大小写不敏感 + 分隔符归一）；
     2. 必须是技能目录（含 SKILL.md）；
     3. 目录名不含路径分隔符（防拼接注入）。"""
-    real = os.path.normcase(os.path.normpath(os.path.realpath(skill_path)))
+    # 不跟随根内链接或 junction：否则隔离 alias 会搬走被引用的真实技能。
+    path = os.path.abspath(skill_path)
+    chain = path
+    while True:
+        if sg._is_reparse(chain):
+            return None
+        parent = os.path.dirname(chain)
+        if parent == chain:
+            break
+        chain = parent
+    real = os.path.normcase(os.path.normpath(os.path.realpath(path)))
     real_roots = [os.path.normcase(os.path.normpath(os.path.realpath(r)))
                   for r in allowed_roots]
     if not any(real == rr or real.startswith(rr + os.sep) for rr in real_roots):
@@ -124,6 +135,6 @@ def quarantine_skill(skill_path, allowed_roots):
                 f"隔离时间: {ts}\n"
                 f"恢复方法（确认安全后）: {restore_command(dest, skill_path)}\n"
                 f"（Windows cmd 恢复命令如上；macOS/Linux 请用: "
-                f'mv "{dest}" "{skill_path}"）\n'
+                f'mv -- {shlex.quote(dest)} {shlex.quote(skill_path)}）\n'
                 f"审查建议: python skill_guard.py scan \"{skill_path}\"\n")
     return dest

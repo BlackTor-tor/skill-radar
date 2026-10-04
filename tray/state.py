@@ -1,4 +1,5 @@
 # tray/state.py — 托盘状态机 + 事件环形日志 + 今日计数（纯标准库，UI/托盘的唯一直接数据源）
+import copy
 import json
 import os
 from datetime import datetime
@@ -58,12 +59,18 @@ class TrayState:
         if not isinstance(data, dict):
             return
         today = data.get("today")
-        if isinstance(today, dict) and today:
-            self.today = today
+        counts = today.get(today_key()) if isinstance(today, dict) else None
+        if isinstance(counts, dict):
+            self.today = {today_key(): {
+                k: counts[k] if isinstance(counts.get(k), int)
+                and not isinstance(counts[k], bool) and counts[k] >= 0 else 0
+                for k in ("new", "drift", "block")}}
         events = data.get("events")
         if isinstance(events, list):
-            self.events = [(e.get("kind"), e.get("text"), e.get("ts"))
-                           for e in events if isinstance(e, dict)]
+            self.events = [(e["kind"], _sanitize(e["text"]), e["ts"])
+                           for e in events if isinstance(e, dict)
+                           and all(isinstance(e.get(k), str)
+                                   for k in ("kind", "text", "ts"))][:MAX_EVENTS]
         guard = data.get("guard")
         if guard in ("running", "paused", "alert", "quarantine"):
             self.guard = guard
@@ -98,10 +105,11 @@ class TrayState:
 
     def set_guard(self, g):
         assert g in ("running", "paused", "alert", "quarantine")
-        self.guard = g
-        self.paused = (g == "paused")
+        with self._lock:
+            self.guard = g
+            self.paused = (g == "paused")
+            self._flush()
         self.on_guard_change(g)   # 锁外调用：壳层回调不得再进 state 的锁（防死锁）
-        self._flush()
 
     def bump(self, key):
         k = today_key()
@@ -110,21 +118,28 @@ class TrayState:
             self.today.setdefault(k, {"new": 0, "drift": 0, "block": 0})[key] += 1
             self._flush()
 
-    def record_skill(self, skill_path, name, score, status):
+    def record_skill(self, skill_path, name, score, status, findings=None,
+                     advice=None, reason=None):
         """终审 I-3：Security 屏数据源。扫描线程每轮把结果写入（覆盖同路径
         旧值）；与 add_event/bump 同锁，snapshot 消费端拿一致视图。"""
         with self._lock:
             self.skills[skill_path] = {"name": name, "score": score,
                                        "status": status}
+            if findings is not None:
+                self.skills[skill_path]["findings"] = copy.deepcopy(findings)
+            if advice is not None:
+                self.skills[skill_path].update(advice=advice, reason=reason or "")
 
     def snapshot(self):
         with self._lock:
             # 深拷一层（终审 I-3 + 账本 T1-1）：skills/today 的内层 dict 一并
             # 复制，UI 侧改动快照不会别名回写内部态
+            k = today_key()
+            counts = self.today.get(k, {"new": 0, "drift": 0, "block": 0})
             return {"guard": self.guard,
                     "watched_roots": self.watched_roots,
                     "paused": self.paused,
                     "events": [{"kind": k, "text": t, "ts": ts}
                                for k, t, ts in self.events],
-                    "today": {d: dict(v) for d, v in self.today.items()},
-                    "skills": {p: dict(v) for p, v in self.skills.items()}}
+                    "today": {k: dict(counts)},
+                    "skills": copy.deepcopy(self.skills)}

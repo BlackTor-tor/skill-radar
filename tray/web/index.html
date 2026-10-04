@@ -1,433 +1,667 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8">
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SkillRadar Tray</title>
+<meta name="color-scheme" content="light">
+<title>SkillRadar · 技能守护</title>
 <style>
-/* 冷调极简 Token（规格 §2 原文，OKLCH） */
 :root {
-  --color-primary: oklch(0.55 0.20 250);
-  --color-surface: oklch(0.99 0.005 240);
-  --color-on-surface: oklch(0.15 0.01 240);
-  --color-error: oklch(0.55 0.20 25);
-  --color-success: oklch(0.65 0.18 145);
-  --color-warning: oklch(0.75 0.15 80);
-  --color-border: oklch(0.90 0.005 240);
-  --color-muted: oklch(0.50 0.02 240);
-  --radius: 6px;
-  --font-stack: 'Segoe UI', -apple-system, 'SF Pro Text', 'PingFang SC',
-                'Microsoft YaHei', sans-serif;
+  --bg: oklch(0.969 0.006 250); --surface: oklch(1 0 0); --fg: oklch(0.28 0.046 255);
+  --muted: oklch(0.49 0.028 255); --border: oklch(0.91 0.013 250); --accent: oklch(0.47 0.087 181);
+  --accent-hover: oklch(0.39 0.078 181); --accent-soft: oklch(0.96 0.025 181);
+  --nav-active: oklch(0.925 0.018 251); --hover: oklch(0.951 0.008 250);
+  --danger: oklch(0.48 0.159 27); --danger-soft: oklch(0.964 0.016 27);
+  --warning: oklch(0.43 0.085 72); --warning-soft: oklch(0.97 0.027 82);
+  --chart: oklch(0.42 0.054 252); --overlay: oklch(0.24 0.028 255 / 0.24);
+  --shadow: 0 2px 5px oklch(0.25 0.025 255 / 0.025), 0 12px 30px oklch(0.25 0.025 255 / 0.025);
+  --display: 'Segoe UI Variable Display', 'Segoe UI', 'Microsoft YaHei UI', sans-serif;
+  --body: 'Microsoft YaHei UI', 'PingFang SC', 'Segoe UI', sans-serif;
+  --mono: 'Cascadia Code', Consolas, 'SFMono-Regular', monospace;
+  --radius: 14px;
 }
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: var(--font-stack); background: var(--color-surface);
-       color: var(--color-on-surface); font-size: 15px; line-height: 1.6; }
-.layout { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
-nav.sidebar { border-right: 1px solid var(--color-border); padding: 20px 12px;
-              display: flex; flex-direction: column; gap: 2px; }
-nav.sidebar button { all: unset; cursor: pointer; padding: 10px 14px;
-  border-radius: var(--radius); min-height: 44px; display: flex;
-  align-items: center; gap: 10px; color: var(--color-on-surface);
-  transition: background-color 150ms ease-out, color 150ms ease-out; }
-nav.sidebar button:hover { background: oklch(0.96 0.005 240); }
-nav.sidebar button.active { background: oklch(0.93 0.01 250); color: var(--color-primary); }
-main { padding: 28px 36px; max-width: 1100px; }
-main section { display: none; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; width: 100%; height: 100%; }
+body { background: var(--bg); color: var(--fg); font: 13px/1.6 var(--body); }
+button, input, select { font: inherit; }
+button { color: var(--fg); cursor: pointer; }
+button, input, a, [tabindex] { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, input:focus-visible, a:focus-visible, [tabindex]:focus-visible {
+  outline: 3px solid var(--accent); outline-offset: 3px;
+}
+button:disabled, input:disabled { cursor: default; opacity: .5; }
+button { transition: background 140ms, border-color 140ms, box-shadow 140ms; }
+.icon-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.icon { display: inline-block; width: 19px; height: 19px; flex: 0 0 auto; vertical-align: middle; }
+h1, h2, h3, p { margin: 0; }
+h1, h2, h3, .brand-name, .num { font-family: var(--display); }
+h1 { font-size: 27px; line-height: 1.35; font-weight: 650; letter-spacing: -.6px; }
+h2 { font-size: 16px; line-height: 1.5; font-weight: 650; }
+h3 { font-size: 14px; font-weight: 600; }
+.muted, .sub, small { color: var(--muted); }
+.sub { margin-top: 7px; font-size: 13px; text-wrap: pretty; }
+.layout { height: 100dvh; display: grid; grid-template-columns: 184px minmax(0, 1fr); }
+.sidebar { display: flex; flex-direction: column; background: var(--surface); border-right: 1px solid var(--border); padding: 27px 14px 17px; min-height: 0; }
+.brand { display: flex; gap: 9px; align-items: center; padding: 0 8px; }
+.brand .icon { width: 28px; height: 28px; }
+.brand-icon { width: 34px; height: 34px; flex: 0 0 auto; }
+.brand-name { font-size: 20px; font-weight: 700; letter-spacing: -.7px; }
+.brand-sub { padding: 7px 8px 0 45px; font-size: 11px; color: var(--muted); letter-spacing: 1px; }
+.nav-label { color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: 1px; padding: 37px 13px 12px; }
+.nav-items { display: grid; gap: 6px; }
+.nav-btn { height: 46px; display: flex; gap: 12px; align-items: center; background: transparent; border: 1px solid transparent; border-radius: 9px; padding: 0 13px; text-align: left; font-size: 13px; }
+.nav-btn:hover { background: var(--hover); }
+.nav-btn.active { background: var(--nav-active); color: var(--fg); font-weight: 600; }
+.nav-btn .nav-dot { margin-left: auto; width: 5px; height: 5px; background: var(--fg); border-radius: 50%; }
+.nav-btn:not(.active) .nav-dot { display: none; }
+.side-bottom { margin-top: auto; padding: 20px 9px 0; }
+.side-status { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; }
+.status-dot { height: 7px; width: 7px; background: var(--muted); border-radius: 50%; flex: 0 0 auto; }
+.status-dot.connected { background: var(--chart); }
+.side-note { margin-top: 6px; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.side-foot { margin-top: 19px; padding-top: 13px; border-top: 1px solid var(--border); font: 10px var(--display); letter-spacing: .6px; color: var(--muted); }
+.workspace { min-width: 0; min-height: 0; display: grid; grid-template-rows: 57px minmax(0,1fr); }
+.topbar { border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 0 29px; }
+.breadcrumb { font-size: 12px; display: flex; align-items: center; gap: 11px; }
+.breadcrumb .icon { width: 13px; height: 13px; color: var(--muted); }
+.connection { display: flex; gap: 8px; align-items: center; font-size: 11px; color: var(--muted); flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
+#ui-language { padding: 0 12px; min-width: 94px; cursor: pointer; }
+select:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+html[lang="en"] .brand-sub { letter-spacing: 0; padding-left: 8px; }
+html[lang="en"] .nav-label { letter-spacing: .3px; }
+html[lang="en"] .guard-card { flex-wrap: wrap; }
+html[lang="en"] .guard-copy { min-width: 230px; }
+html[lang="en"] .lbl { line-height: 1.5; }
+body.drawer-open { overflow: hidden; }
+body.drawer-open #main-content { overflow: hidden; }
+main { overflow-y: auto; min-width: 0; padding: 25px 29px 24px; scrollbar-gutter: stable; }
+main section { display: none; max-width: 1190px; margin: 0 auto; }
 main section.active { display: block; }
-h1 { font-size: 22px; margin-bottom: 4px; letter-spacing: -0.01em; }
-h2 { font-size: 16px; margin: 26px 0 10px; color: var(--color-on-surface); }
-p.sub { color: var(--color-muted); margin-bottom: 22px; max-width: 70ch; }
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-        gap: 14px; }
-.tile { border: 1px solid var(--color-border); border-radius: var(--radius);
-        padding: 14px 16px; background: var(--color-surface); }
-.tile .num { font-size: 26px; font-weight: 650; }
-.tile .lbl { color: var(--color-muted); font-size: 13px; margin-top: 2px; }
-table { width: 100%; border-collapse: collapse; font-size: 14px; }
-th { text-align: left; font-size: 12px; font-weight: 600; color: var(--color-muted);
-     text-transform: uppercase; letter-spacing: 0.04em;
-     border-bottom: 1px solid var(--color-border); padding: 8px 10px; }
-td { padding: 9px 10px; border-bottom: 1px solid var(--color-border); }
-tbody tr { cursor: pointer; transition: background-color 150ms ease-out; }
-tbody tr:hover { background: oklch(0.97 0.005 240); }
-.badge { display: inline-block; font-size: 12px; font-weight: 600;
-         padding: 1px 8px; border-radius: 999px; }
-.badge.crit { background: var(--color-error); color: white; }
-.badge.warn { background: var(--color-warning); color: oklch(0.2 0.05 80); }
-.badge.ok   { background: var(--color-success); color: oklch(0.18 0.05 145); }
-.bar { background: oklch(0.93 0.005 240); border-radius: 3px; height: 14px; }
-.bar > span { display: block; height: 100%; border-radius: 3px;
-              background: var(--color-primary); }
-.drawer { position: fixed; top: 0; right: -420px; width: 420px; height: 100vh;
-          background: var(--color-surface); border-left: 1px solid var(--color-border);
-          box-shadow: -8px 0 24px oklch(0.15 0.01 240 / 0.08); padding: 24px;
-          overflow-y: auto; transition: transform 200ms ease-out;
-          z-index: 40; }
-.drawer.open { transform: translateX(-420px); }
-.toast { position: fixed; bottom: 20px; left: 50%; transform: translate(-50%, 0);
-         background: var(--color-on-surface); color: var(--color-surface);
-         padding: 10px 18px; border-radius: var(--radius); font-size: 14px;
-         opacity: 0; transition: opacity 200ms ease-out; z-index: 50; }
+.page-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 19px; }
+.page-heading > div { min-width: 0; }
+.btn { min-height: 44px; padding: 0 15px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.btn:hover { background: var(--hover); border-color: oklch(0.8 0.02 250); }
+.btn .icon { width: 16px; height: 16px; }
+.btn.primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+.btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn.ghost { background: transparent; border-color: transparent; }
+.btn.ghost:hover { background: var(--hover); border-color: var(--border); }
+.btn.danger { color: var(--danger); }
+.btn.danger:hover { background: var(--danger-soft); border-color: var(--danger); }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); min-width: 0; }
+.guard-card { display: flex; align-items: center; gap: 19px; padding: 19px 22px; margin-bottom: 16px; }
+.guard-mark { width: 56px; height: 56px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; flex: 0 0 auto; }
+.guard-mark .icon { width: 38px; height: 38px; }
+.guard-copy { min-width: 0; flex: 1; }
+.eyebrow { font-size: 10px; color: var(--muted); letter-spacing: 1px; margin-bottom: 4px; }
+.guard-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 20px; }
+.guard-copy p { margin-top: 5px; color: var(--muted); font-size: 12px; }
+.guard-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.guard-card.warn .guard-mark { background: var(--warning-soft); color: var(--warning); }
+.guard-card.danger .guard-mark { background: var(--danger-soft); color: var(--danger); }
+.guard-card.paused .guard-mark { background: var(--hover); color: var(--muted); }
+.badge { display: inline-flex; align-items: center; padding: 3px 8px; border-radius: 5px; font-size: 10px; line-height: 1.6; font-weight: 600; white-space: nowrap; background: var(--hover); color: var(--fg); }
+.badge.crit { background: var(--danger-soft); color: var(--danger); }
+.badge.warn { background: var(--warning-soft); color: var(--warning); }
+.badge.ok { background: var(--hover); color: var(--fg); }
+.grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin-bottom: 19px; }
+.tile { padding: 14px 17px; }
+.tile-top { display: flex; align-items: center; justify-content: space-between; }
+.tile-top .icon { width: 15px; height: 15px; color: var(--muted); }
+.lbl { color: var(--muted); font-size: 11px; }
+.num { font-size: 29px; line-height: 1.25; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 7px; letter-spacing: -.7px; overflow-wrap: anywhere; }
+.num small { font-size: 11px; font-family: var(--body); font-weight: 400; letter-spacing: 0; margin-left: 7px; }
+.card-head { min-height: 63px; padding: 16px 19px; display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+.card-head .meta { color: var(--muted); font-size: 11px; }
+.card-head .btn { min-height: 44px; margin: -7px -7px -7px 0; }
+table { border-collapse: collapse; width: 100%; table-layout: fixed; font-size: 12px; }
+th { color: var(--muted); background: var(--bg); font-size: 10px; font-weight: 500; text-align: left; padding: 10px 16px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+td { padding: 14px 16px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+tr:last-child td { border-bottom: 0; }
+.events-table-region { max-height: 202px; overflow-y: auto; }
+.events-table-region th { position: sticky; top: 0; z-index: 1; }
+.rowlink { cursor: pointer; }
+.rowlink:hover { background: var(--hover); }
+.rowlink:focus-visible { outline-offset: -3px; }
+.event-time { font-family: var(--display); font-variant-numeric: tabular-nums; font-size: 11px; }
+.event-time small { display: block; font-size: 10px; }
+.event-description { display: flex; align-items: center; gap: 9px; }
+.event-description > span { min-width: 0; flex: 1; }
+.event-description .icon { width: 15px; height: 15px; color: var(--muted); }
+.card-foot { border-top: 1px solid var(--border); padding: 11px 18px; color: var(--muted); font-size: 10px; }
+.note { color: var(--muted); font-size: 11px; line-height: 1.8; text-wrap: pretty; }
+.screen-note { margin-top: 15px; display: flex; align-items: flex-start; gap: 8px; }
+.screen-note .icon { width: 15px; height: 15px; margin-top: 2px; }
+.state-message { padding: 26px 20px; text-align: center; color: var(--muted); }
+.state-message strong { display: block; color: var(--fg); font-size: 13px; margin-bottom: 5px; font-weight: 600; }
+.state-message p { font-size: 11px; }
+.state-message .icon { width: 25px; height: 25px; margin-bottom: 8px; }
+.state-message .btn { margin-top: 13px; }
+.connection-error { background: var(--warning-soft); border: 1px solid var(--border); padding: 11px 15px; border-radius: 9px; display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.connection-error > div { flex: 1; min-width: 0; }
+.connection-error p { font-size: 11px; color: var(--muted); }
+.connection-error strong { font-size: 12px; }
+.security-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 13px 17px; gap: 12px; }
+.search { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 0 10px; min-height: 44px; max-width: 265px; flex: 1; }
+.search .icon { width: 16px; height: 16px; color: var(--muted); }
+.search:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
+.search input { border: 0; outline: 0; background: transparent; color: var(--fg); min-width: 0; width: 100%; height: 42px; font-size: 12px; }
+.search input:focus-visible { outline: 0; }
+.filters { display: flex; gap: 3px; background: var(--bg); padding: 3px; border-radius: 8px; }
+.filter { min-height: 44px; border: 1px solid transparent; border-radius: 6px; background: transparent; padding: 0 12px; font-size: 11px; }
+.filter:hover { background: var(--hover); }
+.filter.active { background: var(--surface); box-shadow: 0 1px 3px oklch(0.25 0.025 255 / .08); border-color: var(--border); font-weight: 600; }
+.skill-name { font-weight: 600; font-size: 12px; margin-bottom: 3px; overflow-wrap: anywhere; }
+.skill-path { font: 10px/1.6 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.score { font-family: var(--display); font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.score.crit { color: var(--danger); }
+.advice { color: var(--muted); font-size: 11px; }
+.advice.crit { color: var(--danger); }
+.usage-summary { padding: 21px 23px; display: grid; grid-template-columns: 1.35fr 1fr 1fr; gap: 19px; margin-bottom: 20px; }
+.usage-summary > div + div { border-left: 1px solid var(--border); padding-left: 22px; }
+.usage-summary .num { font-size: 27px; }
+.usage-list { padding: 2px 20px 20px; }
+.usage-row { display: grid; grid-template-columns: 24px minmax(100px,1.3fr) minmax(50px,2fr) 55px; align-items: center; gap: 12px; min-height: 43px; }
+.usage-rank { color: var(--muted); font: 11px var(--mono); }
+.usage-lbl { min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
+.usage-num { text-align: right; font: 600 13px var(--display); font-variant-numeric: tabular-nums; min-width: 0; overflow-wrap: anywhere; }
+.bar { background: var(--bg); height: 8px; border-radius: 3px; }
+.bar > span { display: block; height: 100%; border-radius: 3px; background: var(--chart); }
+.usage-table { border-top: 1px solid var(--border); }
+.usage-table td { font-size: 11px; padding: 13px; }
+.usage-table th { padding: 10px 13px; }
+.usage-table .numeric { text-align: right; font-variant-numeric: tabular-nums; }
+.settings-stack { display: grid; gap: 18px; }
+.settings-card { padding: 0 21px; }
+.settings-card .card-head { padding-left: 0; padding-right: 0; border-bottom: 1px solid var(--border); min-height: 57px; }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 18px 0; border-bottom: 1px solid var(--border); }
+.settings-row:last-child { border-bottom: 0; }
+.settings-copy { min-width: 0; flex: 1; }
+.settings-copy h3 { margin-bottom: 4px; }
+.settings-copy small { display: block; font-size: 11px; line-height: 1.8; text-wrap: pretty; }
+.switch { border: 0; padding: 0; background: transparent; width: 48px; height: 44px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 8px; position: relative; }
+.switch-track { width: 42px; height: 24px; border-radius: 14px; background: oklch(0.8 0.02 250); padding: 3px; transition: background 140ms; }
+.switch-track::after { content: ''; display: block; width: 18px; height: 18px; background: var(--surface); border-radius: 50%; box-shadow: 0 1px 3px oklch(0.25 0.025 255 / .15); transition: transform 140ms; }
+.switch.on .switch-track { background: var(--accent); }
+.switch.on .switch-track::after { transform: translateX(18px); }
+.switch:hover .switch-track { background: oklch(0.69 0.026 250); }
+.switch.on:hover .switch-track { background: var(--accent-hover); }
+.root-row { display: flex; align-items: center; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--border); }
+.root-row > .icon { color: var(--muted); width: 18px; height: 18px; }
+.root-text { min-width: 0; flex: 1; }
+.root-text p { font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.root-text .badge { margin-left: 7px; }
+.root-text small { font: 10px/1.7 var(--mono); overflow-wrap: anywhere; }
+.add-root { padding: 17px 0; }
+.add-root label { display: block; font-size: 11px; margin-bottom: 8px; color: var(--muted); }
+.input-row { display: flex; align-items: center; gap: 9px; }
+.input-row input { min-width: 0; width: 100%; flex: 1; height: 44px; border: 1px solid var(--border); background: var(--bg); border-radius: 8px; padding: 0 12px; color: var(--fg); font: 11px var(--mono); }
+input::placeholder { color: var(--muted); opacity: 1; }
+.form-error { margin-top: 8px; color: var(--danger); font-size: 11px; }
+.data-path { font: 11px/1.7 var(--mono); overflow-wrap: anywhere; }
+.backdrop { position: fixed; inset: 0; z-index: 40; background: var(--overlay); }
+.drawer { position: fixed; inset: 0 0 0 auto; z-index: 41; width: min(480px, 100vw); background: var(--surface); box-shadow: -12px 0 40px oklch(0.24 0.028 255 / .13); display: flex; flex-direction: column; min-height: 0; }
+.drawer-header { display: flex; justify-content: space-between; gap: 15px; align-items: flex-start; padding: 24px 24px 19px; border-bottom: 1px solid var(--border); flex: 0 0 auto; }
+.drawer-header > div { min-width: 0; }
+.drawer-header h2 { font-size: 21px; overflow-wrap: anywhere; line-height: 1.4; }
+.drawer-header .eyebrow { margin-bottom: 7px; }
+.close-btn { padding: 0 11px; min-width: 76px; flex: 0 0 auto; }
+.drawer-content { padding: 21px 24px; overflow: auto; overscroll-behavior: contain; flex: 1; min-height: 0; }
+.detail-summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
+.detail-label { color: var(--muted); font-size: 10px; display: block; margin-bottom: 7px; }
+.detail-location { padding: 13px 14px; background: var(--bg); border-radius: 8px; font: 11px/1.85 var(--mono); overflow-wrap: anywhere; margin-bottom: 16px; }
+.detail-reason { font-size: 12px; line-height: 1.9; margin-bottom: 21px; overflow-wrap: anywhere; }
+.findings-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.finding { border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+.finding-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.rule-id { font: 10px var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.finding p { margin: 10px 0; font-size: 12px; overflow-wrap: anywhere; line-height: 1.8; }
+.finding-location { display: flex; align-items: flex-start; gap: 7px; font: 10px/1.8 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.finding-location .icon { width: 14px; height: 14px; margin-top: 2px; }
+.diff-pre { margin: 12px 0 0; padding: 13px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--fg); font: 11px/1.85 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.detail-empty { border: 1px solid var(--border); background: var(--bg); padding: 18px; border-radius: 9px; }
+.detail-empty h3 { margin-bottom: 5px; }
+.detail-empty p { font-size: 11px; line-height: 1.9; color: var(--muted); }
+.diff-section { margin-top: 21px; }
+.diff-section h3 { margin-bottom: 4px; }
+.inline-status { font-size: 11px; margin-top: 12px; overflow-wrap: anywhere; }
+.inline-status.error { color: var(--danger); }
+.drawer-footer { border-top: 1px solid var(--border); padding: 17px 24px 20px; flex: 0 0 auto; background: var(--surface); }
+.drawer-footer .note { font-size: 10px; margin-bottom: 12px; }
+.drawer-actions { display: flex; gap: 9px; }
+.drawer-actions .btn { flex: 1; }
+.toast { position: fixed; bottom: 23px; left: 50%; transform: translateX(-50%); max-width: min(550px,calc(100vw - 40px)); background: var(--fg); color: var(--surface); padding: 12px 17px; border-radius: 9px; box-shadow: var(--shadow); font-size: 12px; z-index: 60; pointer-events: none; opacity: 0; transition: opacity 140ms; overflow-wrap: anywhere; }
 .toast.show { opacity: 1; }
-.settings-row { display: flex; justify-content: space-between; align-items: center;
-                padding: 14px 0; border-bottom: 1px solid var(--color-border);
-                max-width: 70ch; }
-/* 任务 6 Minor：开关放大到 48x28（触摸目标≥44px 宽，行高由 .settings-row
-   padding 保证）；knob 22px、translateX(20px) 后左右各余 3px，视觉居中 */
-.switch { width: 48px; height: 28px; border-radius: 999px; background: oklch(0.9 0.005 240);
-          position: relative; cursor: pointer; min-width: 48px;
-          transition: background-color 200ms ease-out; }
-.switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 22px;
-                 height: 22px; border-radius: 50%; background: white;
-                 transition: transform 200ms ease-out; }
-.switch.on { background: var(--color-primary); }
-.switch.on::after { transform: translateX(20px); }
-/* 任务 6 渲染辅助（新增，不动骨架 Token 与结构） */
-.empty { color: var(--color-muted); text-align: center; padding: 18px 10px; }
-.usage-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px;
-             max-width: 70ch; }
-.usage-lbl { flex: none; width: 96px; font-size: 13px; color: var(--color-muted); }
-.usage-num { flex: none; width: 40px; text-align: right; font-size: 13px;
-             font-weight: 600; }
-.diff-pre { white-space: pre-wrap; word-break: break-all; font-size: 12.5px;
-            background: oklch(0.97 0.005 240); border: 1px solid var(--color-border);
-            border-radius: var(--radius); padding: 12px; max-width: 100%;
-            overflow-x: auto; }
-#drawer-body p { max-width: 65ch; margin-bottom: 8px; }
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { transition-property: none !important; animation: none !important; }
+.toast.error { background: var(--danger); }
+.loading { color: var(--muted); }
+@media (max-width: 940px) {
+  .layout { grid-template-columns: 164px minmax(0,1fr); }
+  .sidebar { padding: 24px 11px 15px; }
+  .brand-name { font-size: 18px; } .brand .icon { width: 25px; height: 25px; }
+  .brand-sub { padding-left: 42px; } .topbar { padding: 0 22px; }
+  main { padding: 22px; } .guard-card { padding: 18px; gap: 15px; }
+  .guard-mark { width: 54px; height: 54px; } .guard-mark .icon { width: 33px; height: 33px; }
+  .guard-title { font-size: 18px; } .guard-actions .btn { padding: 0 10px; }
+  .tile { padding: 13px; } td, th { padding-left: 12px; padding-right: 12px; }
+  .security-toolbar { padding: 12px; gap: 8px; } .filter { padding: 0 9px; }
+  .usage-row { gap: 9px; } .usage-summary { padding: 18px; gap: 13px; }
 }
+@media (max-height: 600px) and (min-width: 701px) {
+  .workspace { grid-template-rows: 50px minmax(0,1fr); }
+  main { padding-top: 19px; } .page-heading { margin-bottom: 17px; }
+  h1 { font-size: 24px; } .guard-card { padding-top: 16px; padding-bottom: 16px; }
+  .grid { margin-bottom: 18px; } .num { font-size: 25px; }
+  .nav-label { padding-top: 28px; } .drawer-header { padding-top: 18px; }
+  .drawer-footer { padding-top: 13px; padding-bottom: 14px; }
+}
+@media (max-width: 700px) {
+  .layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(0,1fr); }
+  .sidebar { border-right: 0; border-bottom: 1px solid var(--border); padding: 13px; gap: 12px; }
+  .brand-sub, .nav-label, .side-bottom { display: none; }
+  .nav-items { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 4px; }
+  .nav-btn { justify-content: center; padding: 0 5px; gap: 6px; font-size: 11px; }
+  .nav-btn .icon { width: 16px; height: 16px; } .nav-dot { display: none !important; }
+  .workspace { grid-template-rows: 45px minmax(0,1fr); } .topbar { padding: 0 15px; }
+  .connection { font-size: 10px; } main { padding: 18px 15px; }
+  .page-heading { align-items: flex-start; margin-bottom: 17px; } h1 { font-size: 24px; }
+  .page-heading .btn { padding: 0 10px; } .guard-card { flex-wrap: wrap; gap: 13px; }
+  .guard-actions { width: 100%; justify-content: flex-end; } .grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .security-toolbar { flex-direction: column; align-items: stretch; } .search { max-width: none; flex: none; }
+  .filters { justify-content: center; } .security-table th, .security-table td { padding: 11px 8px; font-size: 10px; }
+  .security-table col:nth-child(1) { width: 42%; } .security-table col:nth-child(2) { width: 12%; }
+  .security-table col:nth-child(3) { width: 23%; } .security-table col:nth-child(4) { width: 23%; }
+  .badge { font-size: 9px; padding: 3px 5px; white-space: normal; }
+  .usage-summary { grid-template-columns: 1fr 1fr 1fr; padding: 15px; gap: 9px; }
+  .usage-summary > div + div { padding-left: 10px; } .usage-summary .num { font-size: 22px; }
+  .usage-row { grid-template-columns: 17px minmax(85px,1.5fr) minmax(30px,1fr) 37px; gap: 7px; }
+  .usage-list { padding: 0 14px 15px; } .usage-table td, .usage-table th { padding: 10px 5px; font-size: 9px; }
+  .settings-card { padding: 0 15px; } .settings-row { gap: 12px; }
+  .drawer-header, .drawer-content, .drawer-footer { padding-left: 19px; padding-right: 19px; }
+  .card-head { padding-left: 14px; padding-right: 14px; } .event-description { gap: 3px; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 </style>
 </head>
 <body>
-<div class="layout">
-  <nav class="sidebar">
-    <h1>SkillRadar</h1>
-    <button data-screen="overview" class="active">📊 Overview 概览</button>
-    <button data-screen="security">🛡️ Security 安全</button>
-    <button data-screen="usage">📈 Usage 用量</button>
-    <button data-screen="settings">⚙️ Settings 设置</button>
+<!-- Lucide icons via Iconify, pinned acquisition 2026-10-04; ISC license: lucide-license.txt. -->
+<svg xmlns="http://www.w3.org/2000/svg" class="icon-sprite" aria-hidden="true"><defs><symbol id="icon-radar" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M19.07 4.93A10 10 0 0 0 6.99 3.34M4 6h.01M2.29 9.62a10 10 0 1 0 19.02-1.27"/><path d="M16.24 7.76a6 6 0 1 0-8.01 8.91M12 18h.01m5.98-6.34a6 6 0 0 1-2.22 5.01"/><circle cx="12" cy="12" r="2"/><path d="m13.41 10.59l5.66-5.66"/></g></symbol><symbol id="icon-layout-dashboard" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></g></symbol><symbol id="icon-shield-check" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12l2 2l4-4"/></g></symbol><symbol id="icon-chart-no-axes-combined" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 16v5m4-6.361V21m4-10.344V21m2-18l-8.646 8.646a.5.5 0 0 1-.708 0L9.354 8.354a.5.5 0 0 0-.707 0L2 15m2 3.463V21m4-6.344V21"/></symbol><symbol id="icon-settings-2" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M14 17H5M19 7h-9"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></g></symbol><symbol id="icon-folder" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol><symbol id="icon-arrow-up-right" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h10v10M7 17L17 7"/></symbol><symbol id="icon-chevron-right" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 18l6-6l-6-6"/></symbol><symbol id="icon-x" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 6L6 18M6 6l12 12"/></symbol><symbol id="icon-refresh-cw" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M3 12a9 9 0 0 1 9-9a9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5m5 4a9 9 0 0 1-9 9a9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></g></symbol><symbol id="icon-pause" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><rect width="5" height="18" x="14" y="3" rx="1"/><rect width="5" height="18" x="5" y="3" rx="1"/></g></symbol><symbol id="icon-play" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/></symbol><symbol id="icon-triangle-alert" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m21.73 18l-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3M12 9v4m0 4h.01"/></symbol><symbol id="icon-check" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 6L9 17l-5-5"/></symbol><symbol id="icon-file-code-2" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v4"/><path d="M14 2v4a2 2 0 0 0 2 2h4M5 12l-3 3l3 3m4 0l3-3l-3-3"/></g></symbol><symbol id="icon-search" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="m21 21l-4.34-4.34"/><circle cx="11" cy="11" r="8"/></g></symbol><symbol id="icon-plus" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14m-7-7v14"/></symbol><symbol id="icon-external-link" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 3h6v6m-11 5L21 3m-3 10v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol><symbol id="icon-circle-question-mark" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3m.08 4h.01"/></g></symbol></defs></svg>
+<div class="layout" id="app-layout" data-od-id="app-layout">
+  <nav class="sidebar" aria-label="主导航" data-i18n-aria-label="主导航" data-od-id="sidebar">
+    <div class="brand" data-od-id="brand"><img class="brand-icon" src="../assets/skillradar.png" alt=""><span class="brand-name">SkillRadar</span></div>
+    <p class="brand-sub"><span data-i18n="技能守护工作台">技能守护工作台</span></p>
+    <p class="nav-label"><span data-i18n="工作区">工作区</span></p>
+    <div class="nav-items">
+      <button type="button" class="nav-btn active" data-screen="overview" aria-current="page" data-od-id="nav-overview"><svg class="icon" aria-hidden="true"><use href="#icon-layout-dashboard"/></svg><span data-i18n="概览">概览</span><span class="nav-dot"></span></button>
+      <button type="button" class="nav-btn" data-screen="security" data-od-id="nav-security"><svg class="icon" aria-hidden="true"><use href="#icon-shield-check"/></svg><span data-i18n="安全检查">安全检查</span><span class="nav-dot"></span></button>
+      <button type="button" class="nav-btn" data-screen="usage" data-od-id="nav-usage"><svg class="icon" aria-hidden="true"><use href="#icon-chart-no-axes-combined"/></svg><span data-i18n="使用统计">使用统计</span><span class="nav-dot"></span></button>
+      <button type="button" class="nav-btn" data-screen="settings" data-od-id="nav-settings"><svg class="icon" aria-hidden="true"><use href="#icon-settings-2"/></svg><span data-i18n="设置">设置</span><span class="nav-dot"></span></button>
+    </div>
+    <div class="side-bottom" data-od-id="sidebar-status">
+      <p class="side-status"><span class="status-dot" id="sidebar-dot"></span><span id="sidebar-status"><span data-i18n="正在连接客户端">正在连接客户端</span></span></p>
+      <p class="side-note"><span data-i18n="文件有变化时自动检查">文件有变化时自动检查</span><br><span data-i18n="检查记录保存在本机">检查记录保存在本机</span></p>
+      <p class="side-foot">SKILLRADAR / WINDOWS</p>
+    </div>
   </nav>
-  <main>
-    <section id="screen-overview" class="active">
-      <h1>Overview 概览</h1>
-      <p class="sub">守护状态与最近事件 · Guard status &amp; recent events</p>
-      <button class="btn" id="ov-resume" hidden style="min-height:44px; margin-bottom:14px">恢复守护 Resume</button>
-      <div class="grid" id="ov-tiles"></div>
-      <h2>Recent events · 最近事件流</h2>
-      <table><thead><tr><th>Time 时间</th><th>Kind 类型</th><th>Event 事件</th></tr></thead>
-      <tbody id="ov-events"></tbody></table>
-    </section>
-    <section id="screen-security">
-      <h1>Security 安全</h1>
-      <p class="sub">技能风险表（点击行展开明细） · Skill risk table (click a row)</p>
-      <div class="grid" id="sec-tiles"></div>
-      <table><thead><tr><th>Skill 技能</th><th>Score 风险分</th><th>Status 状态</th>
-      <th>Advice 安装建议</th></tr></thead><tbody id="sec-rows"></tbody></table>
-    </section>
-    <section id="screen-usage">
-      <h1>Usage 用量</h1>
-      <p class="sub">Top 技能调用 · Top skill usage</p>
-      <div id="usage-bars"></div>
-      <h2>调用明细 · Per-skill detail</h2>
-      <div id="usage-detail"></div>
-    </section>
-    <section id="screen-settings">
-      <h1>Settings 设置</h1>
-      <p class="sub">模式与数据目录 · Modes &amp; data directory</p>
-      <div class="settings-row"><div>拦截模式 Block mode<br>
-        <small style="color:var(--color-muted)">CRITICAL/漂移直接拦截（--block）</small></div>
-        <div class="switch" id="sw-block" role="switch" aria-checked="false" tabindex="0"></div></div>
-      <div class="settings-row"><div>隔离 Quarantine<br>
-        <small style="color:var(--color-muted)">拦截后移动到 ~/.skill-radar/quarantine/</small></div>
-        <div class="switch" id="sw-quarantine" role="switch" aria-checked="false" tabindex="0"></div></div>
-      <div class="settings-row"><div>数据目录 Data directory<br>
-        <small id="data-dir-path" style="color:var(--color-muted)"></small></div>
-        <button class="btn" id="btn-open-data" style="min-height:44px">打开 Open</button></div>
-    </section>
-  </main>
-</div>
-<aside class="drawer" id="drawer" role="dialog" aria-modal="false" aria-label="Findings detail 明细">
-  <h2 id="drawer-title"></h2><div id="drawer-body"></div>
-  <div style="margin-top:18px; display:flex; gap:10px">
-    <button class="btn" id="btn-show-diff" style="min-height:44px">Show diff 查看变更</button>
-    <button class="btn" id="btn-accept" style="min-height:44px">Accept drift 接受漂移</button>
+  <div class="workspace">
+    <header class="topbar" data-od-id="topbar">
+      <div class="breadcrumb"><span class="muted"><span data-i18n="工作区">工作区</span></span><svg class="icon" aria-hidden="true"><use href="#icon-chevron-right"/></svg><span id="breadcrumb-current"><span data-i18n="概览">概览</span></span></div>
+      <div class="connection"><label for="ui-language" data-i18n="界面语言">界面语言</label><select id="ui-language" class="btn" aria-label="界面语言" data-i18n-aria-label="界面语言"><option value="zh-CN">中文</option><option value="en">English</option></select><span id="environment-label"><span data-i18n="本机工作区">本机工作区</span></span><span>·</span><span id="sync-time" role="status"><span data-i18n="等待连接">等待连接</span></span></div>
+    </header>
+    <main id="main-content" tabindex="-1" data-od-id="main-content">
+      <div id="connection-error" class="connection-error" role="alert" hidden data-od-id="connection-error">
+        <svg class="icon" aria-hidden="true"><use href="#icon-triangle-alert"/></svg><div><strong id="connection-error-title"><span data-i18n="暂时无法读取客户端状态">暂时无法读取客户端状态</span></strong><p id="connection-error-text"><span data-i18n="正在重试，请稍候。">正在重试，请稍候。</span></p></div><button type="button" class="btn" id="btn-retry" data-od-id="retry-connection"><span data-i18n="重试">重试</span></button>
+      </div>
+      <section id="screen-overview" class="active" aria-labelledby="overview-title" data-od-id="screen-overview">
+        <div class="page-heading"><div><h1 id="overview-title" data-od-id="overview-title"><span data-i18n="概览">概览</span></h1><p class="sub"><span data-i18n="技能守护状态与最近的检查记录。">技能守护状态与最近的检查记录。</span></p></div><button type="button" class="btn primary" id="btn-rescan" data-od-id="rescan-overview"><svg class="icon" aria-hidden="true"><use href="#icon-refresh-cw"/></svg><span><span data-i18n="重新检查">重新检查</span></span></button></div>
+        <div class="card guard-card" id="guard-card" data-od-id="guard-card">
+          <div class="guard-mark"><svg class="icon" aria-hidden="true"><use href="#icon-radar"/></svg></div>
+          <div class="guard-copy"><div class="eyebrow"><span data-i18n="当前守护状态">当前守护状态</span></div><h2 class="guard-title" id="guard-title"><span data-i18n="正在读取状态">正在读取状态</span></h2><p id="guard-description"><span data-i18n="连接客户端后显示真实的守护状态。">连接客户端后显示真实的守护状态。</span></p></div>
+          <div class="guard-actions"><button type="button" class="btn ghost" id="btn-pause" hidden data-od-id="pause-guard"><svg class="icon" aria-hidden="true"><use href="#icon-pause"/></svg><span data-i18n="暂停守护">暂停守护</span></button><button type="button" class="btn" id="ov-resume" hidden data-od-id="resume-guard"><svg class="icon" aria-hidden="true"><use href="#icon-play"/></svg><span data-i18n="恢复守护">恢复守护</span></button></div>
+        </div>
+        <div class="grid" id="ov-tiles" data-od-id="overview-metrics"></div>
+        <div class="card" data-od-id="recent-events-card">
+          <div class="card-head"><h2 data-od-id="recent-events-title"><span data-i18n="最近事件">最近事件</span></h2><span class="meta" id="event-count"><span data-i18n="等待检查记录">等待检查记录</span></span></div>
+          <div class="events-table-region" tabindex="0" aria-label="最近事件列表，可滚动" data-i18n-aria-label="最近事件列表，可滚动" data-od-id="recent-events-scroll"><table aria-label="最近检查事件" data-i18n-aria-label="最近检查事件"><colgroup><col style="width:18%"><col style="width:21%"><col style="width:61%"></colgroup><thead><tr><th scope="col"><span data-i18n="时间">时间</span></th><th scope="col"><span data-i18n="类型">类型</span></th><th scope="col"><span data-i18n="事件内容">事件内容</span></th></tr></thead><tbody id="ov-events"><tr><td colspan="3"><div class="state-message"><strong><span data-i18n="正在读取检查记录">正在读取检查记录</span></strong><p><span data-i18n="请稍候。">请稍候。</span></p></div></td></tr></tbody></table></div>
+          <div class="card-foot"><span data-i18n="可打开的事件支持点击，或使用 Enter / 空格查看详情。">可打开的事件支持点击，或使用 Enter / 空格查看详情。</span></div>
+        </div>
+        <p class="screen-note note"><svg class="icon" aria-hidden="true"><use href="#icon-circle-question-mark"/></svg><span><span data-i18n="规则检查用于发现已知风险，未命中规则不代表绝对安全。使用前仍需核对技能来源与内容。">规则检查用于发现已知风险，未命中规则不代表绝对安全。使用前仍需核对技能来源与内容。</span></span></p>
+      </section>
+      <section id="screen-security" aria-labelledby="security-title" data-od-id="screen-security">
+        <div class="page-heading"><div><h1 id="security-title" data-od-id="security-title"><span data-i18n="安全检查">安全检查</span></h1><p class="sub"><span data-i18n="先看需要关注的技能，再核对文件与代码。">先看需要关注的技能，再核对文件与代码。</span></p></div><button type="button" class="btn" id="btn-sec-rescan" data-od-id="rescan-security"><svg class="icon" aria-hidden="true"><use href="#icon-refresh-cw"/></svg><span data-i18n="重新检查">重新检查</span></button></div>
+        <div class="grid" id="sec-tiles" data-od-id="security-metrics"></div>
+        <div class="card" data-od-id="security-results">
+          <div class="security-toolbar"><label class="search"><svg class="icon" aria-hidden="true"><use href="#icon-search"/></svg><input type="search" id="skill-search" aria-label="搜索技能或文件位置" data-i18n-aria-label="搜索技能或文件位置" placeholder="搜索技能或文件位置" data-i18n-placeholder="搜索技能或文件位置" data-od-id="skill-search"></label><div class="filters" role="group" aria-label="筛选检查结果" data-i18n-aria-label="筛选检查结果"><button type="button" class="filter active" data-filter="all" aria-pressed="true" data-od-id="filter-all"><span data-i18n="全部技能">全部技能</span></button><button type="button" class="filter" data-filter="attention" aria-pressed="false" data-od-id="filter-attention"><span data-i18n="需要关注">需要关注</span></button></div></div>
+          <table class="security-table" aria-label="技能安全检查结果" data-i18n-aria-label="技能安全检查结果"><colgroup><col style="width:40%"><col style="width:12%"><col style="width:22%"><col style="width:26%"></colgroup><thead><tr><th scope="col"><span data-i18n="技能 / 文件位置">技能 / 文件位置</span></th><th scope="col"><span data-i18n="风险分">风险分</span></th><th scope="col"><span data-i18n="检查状态">检查状态</span></th><th scope="col"><span data-i18n="处理建议">处理建议</span></th></tr></thead><tbody id="sec-rows"><tr><td colspan="4"><div class="state-message"><strong><span data-i18n="正在读取检查结果">正在读取检查结果</span></strong><p><span data-i18n="请稍候。">请稍候。</span></p></div></td></tr></tbody></table>
+          <div class="card-foot" id="security-count"><span data-i18n="检查结果来自客户端最近保存的记录。">检查结果来自客户端最近保存的记录。</span></div>
+        </div>
+        <p class="screen-note note"><svg class="icon" aria-hidden="true"><use href="#icon-circle-question-mark"/></svg><span><span data-i18n="风险分用于辅助判断；内容有变化不等于有恶意。请打开详情，结合来源、文件位置与代码确认。">风险分用于辅助判断；内容有变化不等于有恶意。请打开详情，结合来源、文件位置与代码确认。</span></span></p>
+      </section>
+      <section id="screen-usage" aria-labelledby="usage-title" data-od-id="screen-usage">
+        <div class="page-heading"><div><h1 id="usage-title" data-od-id="usage-title"><span data-i18n="使用统计">使用统计</span></h1><p class="sub"><span data-i18n="查看已记录的技能调用与来源。">查看已记录的技能调用与来源。</span></p></div><button type="button" class="btn" id="btn-refresh-usage" data-od-id="refresh-usage"><svg class="icon" aria-hidden="true"><use href="#icon-refresh-cw"/></svg><span data-i18n="刷新记录">刷新记录</span></button></div>
+        <div id="usage-bars" data-od-id="usage-summary"></div>
+        <div class="card" data-od-id="usage-ranking"><div class="card-head"><h2 data-od-id="usage-ranking-title"><span data-i18n="技能调用排行">技能调用排行</span></h2><span class="meta"><span data-i18n="按已记录的调用次数排序">按已记录的调用次数排序</span></span></div><div id="usage-detail"><div class="state-message"><strong><span data-i18n="正在读取调用记录">正在读取调用记录</span></strong><p><span data-i18n="请稍候。">请稍候。</span></p></div></div></div>
+        <p class="screen-note note"><svg class="icon" aria-hidden="true"><use href="#icon-circle-question-mark"/></svg><span><span data-i18n="仅展示调用记录中的前 25 项。合计为这些技能的记录之和，不含未被记录的调用；扫描事件不计入调用次数。">仅展示调用记录中的前 25 项。合计为这些技能的记录之和，不含未被记录的调用；扫描事件不计入调用次数。</span></span></p>
+      </section>
+      <section id="screen-settings" aria-labelledby="settings-title" data-od-id="screen-settings">
+        <div class="page-heading"><div><h1 id="settings-title" data-od-id="settings-title"><span data-i18n="设置">设置</span></h1><p class="sub"><span data-i18n="管理守护方式、技能文件夹与本机数据。">管理守护方式、技能文件夹与本机数据。</span></p></div><span class="muted" style="font-size:11px"><span data-i18n="更改后自动保存">更改后自动保存</span></span></div>
+        <div class="settings-stack">
+          <div class="card settings-card" data-od-id="protection-settings"><div class="card-head"><h2 data-od-id="protection-title"><span data-i18n="守护方式">守护方式</span></h2><span class="meta"><span data-i18n="作用于后续检查">作用于后续检查</span></span></div>
+            <div class="settings-row"><div class="settings-copy"><h3 id="block-label" data-od-id="block-label"><span data-i18n="高风险处理">高风险处理</span></h3><small id="block-description"><span data-i18n="开启后，将命中严重风险的技能标记并提醒。内容变化仅作提示；此设置本身不会阻止 AI 使用技能。">开启后，将命中严重风险的技能标记并提醒。内容变化仅作提示；此设置本身不会阻止 AI 使用技能。</span></small></div><button type="button" class="switch" id="sw-block" role="switch" aria-checked="false" aria-labelledby="block-label" aria-describedby="block-description" data-od-id="block-switch" disabled><span class="switch-track" aria-hidden="true"></span></button></div>
+            <div class="settings-row"><div class="settings-copy"><h3 id="quarantine-label" data-od-id="quarantine-label"><span data-i18n="隔离严重风险技能">隔离严重风险技能</span></h3><small id="quarantine-description"><span data-i18n="需同时开启高风险处理；检测到严重风险时尝试将技能移出原文件夹，保存到本机隔离文件夹。失败时会提醒。">需同时开启高风险处理；检测到严重风险时尝试将技能移出原文件夹，保存到本机隔离文件夹。失败时会提醒。</span></small></div><button type="button" class="switch" id="sw-quarantine" role="switch" aria-checked="false" aria-labelledby="quarantine-label" aria-describedby="quarantine-description" data-od-id="quarantine-switch" disabled><span class="switch-track" aria-hidden="true"></span></button></div>
+          </div>
+          <div class="card settings-card" data-od-id="skill-folders"><div class="card-head"><h2 data-od-id="skill-folders-title"><span data-i18n="技能文件夹">技能文件夹</span></h2><span class="meta" id="roots-count"><span data-i18n="等待读取">等待读取</span></span></div><div id="settings-roots"><div class="state-message"><strong><span data-i18n="正在读取技能文件夹">正在读取技能文件夹</span></strong><p><span data-i18n="请稍候。">请稍候。</span></p></div></div>
+            <form class="add-root" id="root-form" data-od-id="add-folder-form"><label for="root-path"><span data-i18n="添加包含技能的文件夹">添加包含技能的文件夹</span></label><div class="input-row"><input id="root-path" placeholder="例如 C:\Users\你的用户名\.agents\skills" data-i18n-placeholder="例如 C:\Users\你的用户名\.agents\skills" autocomplete="off" aria-describedby="root-help root-error" data-od-id="folder-path"><button type="submit" class="btn" id="btn-add-root" data-od-id="add-folder"><svg class="icon" aria-hidden="true"><use href="#icon-plus"/></svg><span data-i18n="添加">添加</span></button></div><p class="note" id="root-help" style="margin-top:8px"><span data-i18n="请填写完整路径；移除只停止监听，不删除文件。">请填写完整路径；移除只停止监听，不删除文件。</span></p><p class="form-error" id="root-error" role="alert" hidden></p></form>
+          </div>
+          <div class="card settings-card" data-od-id="local-data"><div class="settings-row"><div class="settings-copy"><h3 data-od-id="data-directory-title"><span data-i18n="本机数据">本机数据</span></h3><small class="data-path" id="data-dir-path">~/.skill-radar</small><small><span data-i18n="存放配置、检查记录和隔离文件；~ 表示当前用户的主文件夹。">存放配置、检查记录和隔离文件；~ 表示当前用户的主文件夹。</span></small></div><button type="button" class="btn" id="btn-open-data" data-od-id="open-data"><svg class="icon" aria-hidden="true"><use href="#icon-external-link"/></svg><span data-i18n="打开文件夹">打开文件夹</span></button></div></div>
+        </div>
+      </section>
+    </main>
   </div>
+</div>
+<div class="backdrop" id="drawer-backdrop" aria-hidden="true" hidden data-od-id="drawer-backdrop"></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" aria-describedby="drawer-context" aria-hidden="true" tabindex="-1" hidden data-od-id="skill-detail-drawer">
+  <header class="drawer-header"><div><p class="eyebrow" id="drawer-context"><span data-i18n="技能检查详情">技能检查详情</span></p><h2 id="drawer-title" data-od-id="drawer-title"></h2></div><button type="button" class="btn close-btn" id="btn-close-drawer" aria-label="关闭技能详情" data-i18n-aria-label="关闭技能详情" data-od-id="close-drawer"><svg class="icon" aria-hidden="true"><use href="#icon-x"/></svg><span data-i18n="关闭">关闭</span></button></header>
+  <div class="drawer-content" id="drawer-scroll"><div id="drawer-body" data-od-id="drawer-body"></div><p class="inline-status" id="drawer-status" role="status" hidden></p></div>
+  <footer class="drawer-footer"><p class="note" id="accept-help"><span data-i18n="确认更新记录前，请先查看变化。确认只更新比较记录，不会忽略现有风险提示。">确认更新记录前，请先查看变化。确认只更新比较记录，不会忽略现有风险提示。</span></p><div class="drawer-actions"><button type="button" class="btn" id="btn-show-diff" data-od-id="show-diff"><svg class="icon" aria-hidden="true"><use href="#icon-file-code-2"/></svg><span data-i18n="查看内容变更">查看内容变更</span></button><button type="button" class="btn primary" id="btn-accept" data-od-id="accept-change"><span data-i18n="确认本次变化">确认本次变化</span></button></div></footer>
 </aside>
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true" data-od-id="toast"></div>
+<script src="i18n.js"></script>
 <script>
-/* pywebview.api 桥：get_state() 2s 轮询 + act(name, payload) 动作。
-   四屏渲染（ovTiles/ovEvents/secRows←snapshot.skills/usageBars）、
-   Usage 明细（act('get_usage')，切屏时拉取）、Drawer 打开/关闭、
-   开关 set_mode/set_quarantine、show_diff/accept_drift、
-   恢复守护 resume（托盘动态菜单项与 Overview 按钮共用）见下方实现。
-   约束：innerHTML 拼接前对一切动态文本做 escapeHtml()；XSS 面来自被扫技能名。 */
-async function api(){ return window.pywebview.api; }
-function escapeHtml(s){ return String(s ?? '').replace(/[&<>"']/g,
-  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-let CURRENT = null;
-async function tick(){
-  try { CURRENT = await (await api()).get_state(); render(CURRENT); } catch(e){}
-}
-/* ---- 渲染实现（任务 6 唯一自由度：纯 DOM 渲染；结构与 Token 已由静态断言钉住）---- */
+/* 真实客户端：仅调用 pywebview.api.get_state() 与 act(name, payload)。
+   本文件没有模拟回退、网络请求、配置写入或客户端启动逻辑。 */
 const $ = id => document.getElementById(id);
-const KIND_STYLE = { new:['NEW','ok'], drift:['DRIFT','warn'], block:['BLOCK','crit'],
-                     quarantine:['隔离','crit'], error:['ERROR','crit'], skip:['SKIP','warn'] };
-const GUARD_VIEW = { running:['运行中 Running','var(--color-success)'],
-                     paused:['已暂停 Paused','var(--color-muted)'],
-                     alert:['有告警 Alert','var(--color-warning)'],
-                     quarantine:['已拦截 Quarantined','var(--color-error)'] };
-const ADVICE = { good:'推荐 Recommended', mid:'谨慎 Install with caution',
-                 bad:'不推荐 Not recommended' };
-/* 终审 I-3：建议列由 status/score 推导——drifted/blocked→不推荐、
-   score>=40→不推荐、score>=25→谨慎、否则推荐 */
-function adviceFor(s){
-  const score = Number(s && s.score) || 0;
-  const st = String((s && s.status) || '');
-  if (st === 'drifted' || st === 'blocked' || score >= 40) return ADVICE.bad;
-  if (score >= 25) return ADVICE.mid;
-  return ADVICE.good;
+const I18N=window.SkillRadarI18n, tr=(cn,en)=>I18N.tr(cn,en), uiMarkup=I18N.markup;
+function escapeHtml(value) { return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+const icon = name => '<svg class="icon" aria-hidden="true"><use href="#icon-' + name + '"/></svg>';
+const count = n => Number.isFinite(Number(n)) ? Math.max(0, Number(n)) : 0;
+const number = n => Number.isFinite(Number(n)) && n != null ? Number(n).toLocaleString(I18N.language) : '—';
+const basename = p => String(p || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+function displayText(value) { return tr(String(value ?? '')); }
+function errorText(result) {
+  const raw = String(result?.error || result?.output || tr('客户端未返回成功结果'));
+  const known = {'bridge unavailable':tr('未连接客户端，请在 SkillRadar 桌面窗口中操作'),'guard action timed out':tr('处理时间较长，请稍后核对检查记录'),'guard action timeout':tr('处理时间较长，请稍后核对检查记录'),'provide an absolute root path':tr('请填写技能文件夹的完整路径'),'select a registered skill by its full path':tr('该技能已不在当前检查记录中，请刷新后重试'),'choose zh-CN or en':tr('请选择中文或英文','Choose Chinese or English'),'unknown action':tr('客户端暂不支持此操作，请更新客户端','This action is unavailable. Update the app.'),'payload must be an object':tr('无法读取操作信息，请重试','Could not read this action. Try again.')};
+  if(raw.startsWith('skill not in snapshots: ')) return tr('没有该技能的检查记录，请重新检查：','No check record for this skill. Check again: ')+raw.slice(24);
+  if(raw.startsWith('ambiguous skill name; use a full path: ')) return tr('同名技能较多，请从列表重新选择：','Several skills share this name. Select one from the list: ')+raw.slice('ambiguous skill name; use a full path: '.length);
+  return known[raw] || displayText(raw);
 }
-function kindBadge(k){
-  const v = KIND_STYLE[k] || [k, 'ok'];
-  return '<span class="badge ' + v[1] + '">' + escapeHtml(v[0]) + '</span>';
-}
-function todayCounters(st){
-  const d = Object.values(st.today || {})[0] || {};
-  return { new:d.new || 0, drift:d.drift || 0, block:d.block || 0 };
-}
-function basename(p){
-  const s = String(p).replace(/[\\/]+$/, '');
-  const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
-  return i >= 0 ? s.slice(i + 1) : s;
-}
-/* 从事件文本提取技能名（可开 Drawer 的行才提取）；提取不到返回 null */
-function skillFromEvent(ev){
-  const t = String((ev && ev.text) || '');
-  let m = t.match(/^(?:新技能|内容漂移)\s+(.+)$/);
-  if (m) return m[1].trim();
-  m = t.match(/^CRITICAL 拦截\s+(.+)$/);
-  if (m) return basename(m[1].trim());
-  return null;
-}
-const tile = (lbl, numHtml) =>
-  '<div class="tile"><div class="num">' + numHtml + '</div><div class="lbl">' +
-  escapeHtml(lbl) + '</div></div>';
-const numStr = n => escapeHtml(String(n));
-function evRow(ev){
-  const skill = skillFromEvent(ev);
-  const attrs = skill
-    ? ' class="rowlink" data-skill="' + escapeHtml(skill) + '" data-note="' +
-      escapeHtml(ev.text || '') + '"'
-    : '';
-  return '<tr' + attrs + '><td>' + escapeHtml(ev.ts || '') + '</td><td>' +
-         kindBadge(ev.kind) + '</td><td>' + escapeHtml(ev.text || '') + '</td></tr>';
-}
-/* Security 屏：从 snapshot.skills 渲染（终审 I-3 最小接线——daemon 每轮扫描
-   把 name/score/status 写进 state.skills）。行点击 Drawer 仍走事件备注：
-   按技能名从事件流取最近一条作 data-note。无数据时空态「暂无扫描数据」。 */
-function eventNoteMap(st){
-  const m = {};
-  for (const ev of (st.events || [])) {
-    const s = skillFromEvent(ev);
-    if (s && !(s in m)) m[s] = ev.text || '';
-  }
-  return m;
-}
-function secRow(s, noteMap){
-  return '<tr class="rowlink" data-skill="' + escapeHtml(s.name) +
-         '" data-note="' + escapeHtml(noteMap[s.name] || '') + '"><td>' +
-         escapeHtml(s.name) + '</td><td>' + numStr(s.score) + '</td><td>' +
-         escapeHtml(s.status) + '</td><td>' + escapeHtml(adviceFor(s)) +
-         '</td></tr>';
-}
-function usageHtml(st, c){
-  const items = [['新增 New', c.new], ['漂移 Drift', c.drift], ['拦截 Block', c.block],
-                 ['事件 Events', (st.events || []).length]];
-  const max = Math.max.apply(null, [1].concat(items.map(i => i[1])));
-  const bars = items.map(i =>
-    '<div class="usage-row"><span class="usage-lbl">' + escapeHtml(i[0]) + '</span>' +
-    '<div class="bar" style="flex:1"><span style="width:' +
-    Math.round(i[1] / max * 100) + '%"></span></div>' +
-    '<span class="usage-num">' + numStr(i[1]) + '</span></div>').join('');
-  return '<div class="grid" style="margin-bottom:18px">' +
-         items.map(i => tile(i[0], numStr(i[1]))).join('') + '</div>' + bars;
-}
-/* ---- Usage 明细（终审 I-3）：act('get_usage') 拉取调用级计数（config
-   usage_file 或 skill_monitor.DATA_FILE，按 total 降序前 25），切到 Usage
-   屏时拉取；空数据/桥不可用回退空态（原空态文案保留）。条形复用 .bar。 ---- */
-let USAGE_ROWS = null;
-async function loadUsage(){
-  const r = await act('get_usage', {});
-  USAGE_ROWS = (r && r.ok && Array.isArray(r.rows)) ? r.rows : [];
-  renderUsageDetail();
-}
-function renderUsageDetail(){
-  const el = $('usage-detail');
-  if (!USAGE_ROWS || !USAGE_ROWS.length) {
-    el.innerHTML = '<p class="empty">暂无用量数据 · No usage data</p>' +
-      '<p class="sub" style="margin-top:8px">调用级用量（按技能计数）不在守护快照内：' +
-      '运行 skill_monitor.py 生成用量数据。Per-skill call counts are not in the ' +
-      'guard snapshot — run skill_monitor.py to generate usage data.</p>';
-    return;
-  }
-  const max = Math.max.apply(null, [1].concat(USAGE_ROWS.map(r => r.total)));
-  el.innerHTML =
-    USAGE_ROWS.map(r =>
-      '<div class="usage-row"><span class="usage-lbl">' + escapeHtml(r.name) + '</span>' +
-      '<div class="bar" style="flex:1"><span style="width:' +
-      Math.round(r.total / max * 100) + '%"></span></div>' +
-      '<span class="usage-num">' + numStr(r.total) + '</span></div>').join('') +
-    '<table style="margin-top:14px"><thead><tr><th>Skill 技能</th><th>Total 总计</th>' +
-    '<th>zcode</th><th>claude</th><th>session</th><th>Last 最近</th></tr></thead><tbody>' +
-    USAGE_ROWS.map(r =>
-      '<tr><td>' + escapeHtml(r.name) + '</td><td>' + numStr(r.total) + '</td><td>' +
-      numStr(r.zcode) + '</td><td>' + numStr(r.claude) + '</td><td>' +
-      numStr(r.marker) + '</td><td>' + escapeHtml(r.last || '—') + '</td></tr>').join('') +
-    '</tbody></table>';
-}
-function render(st){
-  if (!st || typeof st !== 'object') return;
-  initSettings(st);
-  const c = todayCounters(st);
-  const g = GUARD_VIEW[st.guard] || [st.guard, 'inherit'];
-  $('ov-resume').hidden = !st.paused;   // 终审 I-2：paused 时给恢复控件（act('resume')）
-  $('ov-tiles').innerHTML =
-    tile('守护 Guard', '<span style="color:' + g[1] + '">' + escapeHtml(g[0]) + '</span>') +
-    tile('监听根 Roots', numStr(st.watched_roots)) +
-    tile('今日新增 New', numStr(c.new)) +
-    tile('今日漂移 Drift', numStr(c.drift)) +
-    tile('今日拦截 Block', numStr(c.block));
-  const evs = st.events || [];
-  $('ov-events').innerHTML = evs.length ? evs.map(evRow).join('')
-    : '<tr><td colspan="3" class="empty">暂无事件 · No events yet</td></tr>';
-  $('sec-tiles').innerHTML =
-    tile('今日新增 New', numStr(c.new)) +
-    tile('今日漂移 Drift', numStr(c.drift)) +
-    tile('今日拦截 Block', numStr(c.block));
-  // 终审 I-3：Security 行来自 snapshot.skills；备注按技能名取最近事件
-  const skills = st.skills || {};
-  const paths = Object.keys(skills);
-  const noteMap = eventNoteMap(st);
-  $('sec-rows').innerHTML = paths.length
-    ? paths.map(p => secRow(skills[p], noteMap)).join('')
-    : '<tr><td colspan="4" class="empty">暂无扫描数据 · awaiting scan</td></tr>';
-  $('usage-bars').innerHTML = usageHtml(st, c);
-}
-/* ---- Drawer（明细抽屉；数据全部来自 get_state 的 snapshot）---- */
-let DRAWER_SKILL = null;
-function openDrawer(skill, note){
-  DRAWER_SKILL = skill;
-  $('drawer-title').textContent = '技能 · ' + skill;
-  $('drawer-body').innerHTML = '<p>' + escapeHtml(note || '') + '</p>';
-  $('drawer').setAttribute('aria-hidden', 'false');
-  $('drawer').classList.add('open');
-}
-function closeDrawer(){
-  DRAWER_SKILL = null;
-  $('drawer').classList.remove('open');
-  $('drawer').setAttribute('aria-hidden', 'true');
-}
-function drawerPre(text){
-  $('drawer-body').innerHTML =
-    '<pre class="diff-pre">' + escapeHtml(text || '(空 empty)') + '</pre>';
-}
-/* ---- act 桥（浏览器直开无 pywebview 时返回错误对象，不抛异常）---- */
-async function act(name, payload){
-  try { return await (await api()).act(name, payload || {}); }
-  catch (e) { return { error: String(e) }; }
-}
-async function runDrawerAction(name, label){
-  if (!DRAWER_SKILL) { toast('未选择技能 No skill selected'); return; }
-  toast(label + ' …');
-  const r = await act(name, { skill: DRAWER_SKILL });
-  if (r && r.ok) { drawerPre(r.output); toast(label + ' 完成 done'); }
-  else { toast(label + ' 失败 failed: ' + ((r && r.error) || (r && r.output) || '未知错误')); }
-}
-/* ---- toast ---- */
+const kindStyles = () => ({new:[tr('新增技能'),'ok'],drift:[tr('内容有变化'),'warn'],block:[tr('高风险提醒'),'crit'],quarantine:[tr('隔离处理'),'crit'],error:[tr('处理失败'),'crit'],skip:[tr('已跳过'),'ok']});
+const statusViews = () => ({blocked:[tr('发现严重风险'),'crit'],drifted:[tr('内容有变化'),'warn'],'baseline-unreviewed':[tr('新技能待确认'),'warn'],scanned:[tr('已检查'),'ok'],rescanned:[tr('已重新检查'),'ok'],unscanned:[tr('尚未检查'),'warn'],trusted:[tr('已确认来源'),'ok'],accepted:[tr('已确认变化'),'ok'],reviewed:[tr('已确认'),'ok']});
+let CURRENT = null, CONNECTED = false, POLL_BUSY = false, POLL_AGAIN = false, ACTIVE_SCREEN = 'overview', FILTER = 'all';
+let USAGE_ROWS = null, USAGE_PHASE = 'idle', USAGE_ERROR = '';
+let DRAWER_SKILL = null, DRAWER_NOTE = '', DRAWER_OPENER = null, DRAWER_TOKEN = 0, DRAWER_BUSY = false, DIFF_OUTPUT = null;
 let TOAST_T = null;
-function toast(msg){
-  const t = $('toast');
-  t.textContent = msg;
-  t.classList.add('show');
-  clearTimeout(TOAST_T);
-  TOAST_T = setTimeout(() => t.classList.remove('show'), 2200);
+let LANGUAGE_BUSY=false, LANGUAGE_REV=0, CONNECTION_ERROR='', DRAWER_ACTION_STATUS=null;
+const PENDING = new Set(), HTML_CACHE = new Map(), SW = {block:false,quarantine:false}, SW_BUSY = {block:false,quarantine:false};
+async function api() { if (!window.pywebview?.api) throw new Error('bridge unavailable'); return window.pywebview.api; }
+async function act(name, payload = {}) { try { return await (await api()).act(name,payload); } catch(e) { return {error:e?.message || String(e)}; } }
+function toast(message, failed=false) { $('toast').textContent=message; $('toast').classList.toggle('error',failed); $('toast').classList.add('show'); clearTimeout(TOAST_T); TOAST_T=setTimeout(()=>$('toast').classList.remove('show'),failed ? 6000 : 3500); }
+function stateMessage(title,description,symbol='folder') { return '<div class="state-message">'+icon(symbol)+'<strong>'+escapeHtml(title)+'</strong><p>'+escapeHtml(description)+'</p></div>'; }
+function metric(label,value,id,symbol='') { return '<div class="card tile" data-od-id="'+id+'"><div class="tile-top"><span class="lbl">'+escapeHtml(label)+'</span>'+(symbol?icon(symbol):'')+'</div><div class="num">'+escapeHtml(number(value))+'</div></div>'; }
+function todayCounters(st) {
+  const now=new Date(), key=[now.getFullYear(),String(now.getMonth()+1).padStart(2,'0'),String(now.getDate()).padStart(2,'0')].join('-');
+  const d=st.today?.[key] || {}; return {new:count(d.new),drift:count(d.drift),block:count(d.block)};
 }
-/* ---- Settings：开关初值从 snapshot.guard 推断（UI 读不到 config，接受简化：
-   guard=="quarantine" 严格蕴含 block 模式开启，其余一律按关渲染）；
-   点击后以 act 返回值为准，失败回滚 + toast ---- */
-const SW = { block: false, quarantine: false };
-let SW_INIT = false;
-function paintSwitch(id, on){
-  const el = $(id);
-  el.classList.toggle('on', !!on);
-  el.setAttribute('aria-checked', on ? 'true' : 'false');
+function skillFromEvent(ev) {
+  const text=String(ev?.text || ''); let m=text.match(/^(?:新技能|内容漂移|内容有变化)\s+(.+)$/);
+  if(m) return m[1].trim(); m=text.match(/^(?:CRITICAL|严重风险)\s*拦截\s+(.+)$/); return m?basename(m[1].trim()):null;
 }
-function initSettings(st){
-  if (SW_INIT) return;
-  SW_INIT = true;
-  SW.block = (st.guard === 'quarantine');
-  paintSwitch('sw-block', SW.block);
-  paintSwitch('sw-quarantine', SW.quarantine);
-  $('data-dir-path').textContent = '~/.skill-radar（config / snapshots.json / quarantine/）';
+function eventSkill(ev) {
+  const skills=CURRENT?.skills || {}, text=String(ev?.text || '');
+  if(ev.skill && Object.hasOwn(skills,ev.skill)) return ev.skill;
+  const exact=text.match(/^(?:CRITICAL|严重风险)\s*拦截\s+(.+)$/); if(exact && Object.hasOwn(skills,exact[1].trim())) return exact[1].trim();
+  const name=skillFromEvent(ev), matches=Object.keys(skills).filter(p=>skills[p]?.name===name); return matches.length===1?matches[0]:null;
 }
-async function toggleSwitch(key, id, actName, payloadKey, label){
-  SW[key] = !SW[key];
-  paintSwitch(id, SW[key]);
-  const payload = {};
-  payload[payloadKey] = SW[key];
-  const r = await act(actName, payload);
-  if (r && r.ok) {
-    toast(label + (SW[key] ? ' 已开启 on' : ' 已关闭 off') +
-          (r.mode ? ' [' + r.mode + ']' : ''));
-  } else {
-    SW[key] = !SW[key];
-    paintSwitch(id, SW[key]);
-    toast(label + ' 设置失败 failed: ' + ((r && r.error) || ''));
+function eventNoteMap(st) { const map=new Map(); for(const ev of st.events || []) { const name=skillFromEvent(ev); if(name && !map.has(name)) map.set(name,ev.text || ''); } return map; }
+function critical(row) { return (row?.findings || []).some(f=>f.severity==='CRITICAL'); }
+function attention(row) { return critical(row) || ['blocked','drifted','baseline-unreviewed'].includes(row?.status) || count(row?.score)>=25 || (row?.findings || []).length>0; }
+function statusBadge(row) { const v=statusViews()[row?.status] || [tr('状态待确认'),'warn']; return '<span class="badge '+v[1]+'">'+v[0]+'</span>'; }
+function adviceFor(row) {
+  if(critical(row) || row.status==='blocked') return tr('暂勿使用');
+  if(row.status==='drifted') return tr('核对内容变化'); if(row.status==='baseline-unreviewed') return tr('确认来源与内容');
+  if(count(row.score)>=40) return tr('暂勿使用'); if(count(row.score)>=25 || (row.findings || []).length) return tr('检查风险详情');
+  return tr('使用前核对来源');
+}
+function evRow(ev,index) {
+  const path=eventSkill(ev), kind=kindStyles()[ev.kind] || [tr('其他事件'),'ok'], ts=String(ev.ts || ''), parts=ts.split(/[ T]/);
+  const attrs=path?' class="rowlink" tabindex="0" data-skill="'+escapeHtml(path)+'" data-note="'+escapeHtml(ev.text || '')+'" aria-label="'+escapeHtml(tr('查看')+(CURRENT.skills[path]?.name || basename(path))+tr('的检查详情'))+'"':'';
+  return '<tr data-od-id="event-row-'+index+'"'+attrs+'><td class="event-time">'+escapeHtml(parts[1] || ts || tr('时间未记录'))+(parts[1]?'<small>'+escapeHtml(parts[0])+'</small>':'')+'</td><td><span class="badge '+kind[1]+'">'+kind[0]+'</span></td><td><div class="event-description"><span>'+escapeHtml(I18N.eventText(ev))+'</span>'+(path?icon('chevron-right'):'')+'</div></td></tr>';
+}
+function secRow(row,path,note,index) {
+  return '<tr class="rowlink" tabindex="0" data-od-id="skill-row-'+index+'" data-skill="'+escapeHtml(path)+'" data-note="'+escapeHtml(note || '')+'" aria-label="'+escapeHtml(tr('查看')+(row.name || basename(path))+tr('的检查详情'))+'"><td><p class="skill-name">'+escapeHtml(row.name || basename(path))+'</p><p class="skill-path">'+escapeHtml(path)+'</p></td><td><span class="score '+(critical(row)?'crit':'')+'">'+escapeHtml(number(row.score))+'</span></td><td>'+statusBadge(row)+(critical(row)?uiMarkup('<div style="margin-top:5px"><span class="badge crit">严重风险</span></div>'):'')+'</td><td><div class="event-description"><span class="advice '+(critical(row)?'crit':'')+'">'+escapeHtml(adviceFor(row))+'</span>'+icon('chevron-right')+'</div></td></tr>';
+}
+function updateHTML(id,html) {
+  const target=$(id); if(HTML_CACHE.get(id)===html) return; HTML_CACHE.set(id,html);
+  const focus=document.activeElement, owned=focus && target.contains(focus), skill=owned?focus.dataset?.skill:null, path=owned?focus.dataset?.path:null;
+  target.innerHTML=html;
+  if(owned && !$('app-layout').inert) { const replacement=[...target.querySelectorAll('[data-skill],[data-path]')].find(el=>skill?el.dataset.skill===skill:el.dataset.path===path); (replacement || $('main-content')).focus({preventScroll:true}); }
+}
+function renderSecurity() {
+  if(!CURRENT) return; const entries=Object.entries(CURRENT.skills || {}).filter(([,r])=>r && typeof r==='object');
+  const note=eventNoteMap(CURRENT), query=$('skill-search').value.trim().toLowerCase();
+  const rows=entries.filter(([p,r])=>(FILTER!=='attention'||attention(r)) && (!query || ((r.name||'')+' '+p).toLowerCase().includes(query))).sort((a,b)=>Number(critical(b[1]))-Number(critical(a[1])) || Number(attention(b[1]))-Number(attention(a[1])) || count(b[1].score)-count(a[1].score));
+  updateHTML('sec-rows',rows.length?rows.map(([p,r],i)=>secRow(r,p,note.get(r.name),i)).join(''):'<tr><td colspan="4">'+stateMessage(entries.length?tr('没有符合条件的技能'):tr('暂无检查记录'),entries.length?tr('换个关键词，或查看全部技能。'):tr('添加技能文件夹后，客户端会在文件变化时检查；也可点击重新检查。'),'shield-check')+'</td></tr>');
+  $('security-count').textContent=tr('显示 ')+rows.length+' / '+entries.length+tr(' 个技能 · 点击行查看完整检查详情');
+}
+function renderGuard(st) {
+  const paused=!!st.paused || st.guard==='paused', blocked=st.guard==='quarantine', alert=st.guard==='alert';
+  const title=paused?tr('守护已暂停'):blocked?tr('发现严重风险'):alert?tr('有技能需要你关注'):st.guard==='running'?tr('技能守护运行中'):tr('守护状态待确认');
+  $('guard-title').textContent=title; $('guard-description').textContent=paused?tr('暂停期间的文件变化会被跳过；恢复后可重新检查。'):blocked?tr('请查看检查详情；是否已隔离以事件记录为准。'):alert?tr('查看最近事件，核对新增技能、风险提示与内容变化。'):tr('监测技能文件夹变化，检查结果会记录在这里。');
+  $('guard-card').className='card guard-card'+(paused?' paused':blocked?' danger':alert?' warn':'');
+  $('ov-resume').hidden=!paused; $('btn-pause').hidden=paused;
+  $('sidebar-status').textContent=paused?tr('守护已暂停'):blocked?tr('发现严重风险'):alert?tr('有待关注事项'):st.guard==='running'?tr('守护运行中'):tr('状态待确认');
+}
+function render(st, syncLanguage=true) {
+  if(!st || typeof st!=='object' || Array.isArray(st)) return; CURRENT=st;
+  if(syncLanguage && !LANGUAGE_BUSY && ['zh-CN','en'].includes(st.settings?.language) && st.settings.language!==I18N.language) {
+    I18N.set(st.settings.language); I18N.apply(); renderUsageDetail();
+    $('breadcrumb-current').textContent=screenTitle(ACTIVE_SCREEN);
   }
+  const c=todayCounters(st), rows=Object.values(st.skills || {}).filter(r=>r && typeof r==='object');
+  renderGuard(st); initSettings(st);
+  updateHTML('ov-tiles',metric(tr('技能文件夹'),st.watched_roots,'metric-folders','folder')+metric(tr('今日新增技能'),c.new,'metric-new')+metric(tr('今日内容有变化'),c.drift,'metric-changed')+metric(tr('今日高风险提醒'),c.block,'metric-blocked'));
+  const events=Array.isArray(st.events)?st.events:[];
+  updateHTML('ov-events',events.length?events.map(evRow).join(''):'<tr><td colspan="3">'+stateMessage(tr('暂无检查事件'),tr('文件有变化时会留下记录；也可以主动重新检查。'),'radar')+'</td></tr>');
+  $('event-count').textContent=tr('最近 ')+events.length+tr(' 条');
+  updateHTML('sec-tiles',metric(tr('已记录技能'),rows.length,'metric-skills')+metric(tr('有严重风险'),rows.filter(critical).length,'metric-critical')+metric(tr('内容有变化'),rows.filter(r=>r.status==='drifted').length,'metric-drifted')+metric(tr('新技能待确认'),rows.filter(r=>r.status==='baseline-unreviewed').length,'metric-unreviewed'));
+  renderSecurity(); paintAvailability();
+  if(DRAWER_SKILL && !DRAWER_BUSY) renderDrawer();
 }
-/* ---- 事件接线 ---- */
-document.querySelectorAll('nav.sidebar button').forEach(b => b.onclick = () => {
-  document.querySelectorAll('nav.sidebar button').forEach(x => x.classList.remove('active'));
-  b.classList.add('active');
-  document.querySelectorAll('main section').forEach(s => s.classList.remove('active'));
-  document.getElementById('screen-' + b.dataset.screen).classList.add('active');
-  if (b.dataset.screen === 'usage') loadUsage();   // 终审 I-3：切屏时拉用量明细
+function paintAvailability() {
+  for(const id of ['btn-rescan','btn-sec-rescan','btn-pause','ov-resume','btn-open-data','btn-add-root']) $(id).disabled=!CONNECTED || PENDING.has(id) || (['btn-rescan','btn-sec-rescan'].includes(id)&&PENDING.has('rescan')) || (id==='btn-add-root'&&PENDING.has('roots'));
+  for(const key of ['block','quarantine']) $('sw-'+key).disabled=!CONNECTED || SW_BUSY[key];
+  for(const button of $('settings-roots').querySelectorAll('button')) button.disabled=!CONNECTED || PENDING.has('roots');
+  $('btn-refresh-usage').disabled=!CONNECTED || USAGE_PHASE==='loading';
+  $('btn-show-diff').disabled=!CONNECTED || DRAWER_BUSY || !CURRENT?.skills?.[DRAWER_SKILL];
+  $('btn-accept').disabled=!CONNECTED || DRAWER_BUSY || CURRENT?.skills?.[DRAWER_SKILL]?.status!=='drifted' || critical(CURRENT?.skills?.[DRAWER_SKILL]);
+}
+function setConnection(ok,error='') {
+  CONNECTED=ok; CONNECTION_ERROR=error; $('sidebar-dot').classList.toggle('connected',ok); $('connection-error').hidden=ok;
+  if(ok) { $('sync-time').textContent=tr('已同步 ')+new Date().toLocaleTimeString(I18N.language,{hour:'2-digit',minute:'2-digit',hour12:false}); if(CURRENT)renderGuard(CURRENT); }
+  else {
+    $('sidebar-status').textContent=CURRENT?tr('状态同步中断'):tr('未连接客户端'); $('sync-time').textContent=CURRENT?tr('显示上次记录'):tr('未连接');
+    $('connection-error-title').textContent=CURRENT?tr('状态同步失败'):tr('尚未连接 SkillRadar 客户端');
+    $('connection-error-text').textContent=CURRENT?tr('保留上次读取的记录，当前守护状态未确认。正在重试。'):error==='bridge unavailable'?tr('请在 SkillRadar 桌面窗口中使用；本页面不会生成模拟检查结果。'):tr('暂时无法读取状态，正在重试。');
+    if(!CURRENT) {
+      $('guard-title').textContent=tr('等待客户端连接'); $('guard-description').textContent=tr('连接后显示真实的守护状态与检查记录。');
+      updateHTML('ov-events','<tr><td colspan="3">'+stateMessage(tr('尚未读取检查记录'),tr('请先连接 SkillRadar 客户端。'),'radar')+'</td></tr>');
+      updateHTML('sec-rows','<tr><td colspan="4">'+stateMessage(tr('尚未读取检查结果'),tr('请先连接 SkillRadar 客户端。'),'shield-check')+'</td></tr>');
+      updateHTML('settings-roots',stateMessage(tr('尚未读取技能文件夹'),tr('连接后显示已登记的文件夹。')));
+      $('roots-count').textContent=tr('尚未读取');
+    }
+    if(DRAWER_SKILL) { $('drawer-status').hidden=false; $('drawer-status').className='inline-status error'; $('drawer-status').textContent=tr('状态同步失败。当前详情为上次读取的记录。'); }
+  } paintAvailability();
+}
+async function tick() {
+  if(POLL_BUSY) { POLL_AGAIN=true; return; } POLL_BUSY=true; const languageRev=LANGUAGE_REV, languageSyncAllowed=!LANGUAGE_BUSY;
+  try { const result=await (await api()).get_state(); if(!result || typeof result!=='object' || Array.isArray(result) || result.error) throw new Error('invalid state'); render(result,languageSyncAllowed && languageRev===LANGUAGE_REV && !LANGUAGE_BUSY); setConnection(true); }
+  catch(e) { setConnection(false,e?.message || String(e)); }
+  finally { POLL_BUSY=false; if(POLL_AGAIN) { POLL_AGAIN=false; tick(); } }
+}
+function paintSwitch(id,on) { $(id).classList.toggle('on',!!on); $(id).setAttribute('aria-checked',on?'true':'false'); }
+function screenTitle(name) { return {overview:tr('概览'),security:tr('安全检查'),usage:tr('使用统计'),settings:tr('设置')}[name]; }
+function repaintLanguage() {
+  const scroll=$('main-content').scrollTop, detailScroll=$('drawer-scroll').scrollTop;
+  I18N.apply(); HTML_CACHE.clear(); $('breadcrumb-current').textContent=screenTitle(ACTIVE_SCREEN);
+  if(CURRENT) render(CURRENT,false);
+  else {
+    updateHTML('ov-tiles',[tr('技能文件夹'),tr('今日新增技能'),tr('今日内容有变化'),tr('今日高风险提醒')].map((label,i)=>metric(label,null,'overview-loading-'+i)).join(''));
+    updateHTML('sec-tiles',[tr('已记录技能'),tr('有严重风险'),tr('内容有变化'),tr('新技能待确认')].map((label,i)=>metric(label,null,'security-loading-'+i)).join(''));
+  }
+  renderUsageDetail(); setConnection(CONNECTED,CONNECTION_ERROR);
+  if(DRAWER_SKILL) { renderDrawer(); paintDrawerStatus(); }
+  if(!$('root-error').hidden) $('root-error').textContent=$('root-error').dataset.error?tr('添加失败：')+errorText({error:$('root-error').dataset.error}):tr('请填写完整的文件夹路径，例如 C:\\Users\\你的用户名\\.agents\\skills');
+  $('main-content').scrollTop=scroll; $('drawer-scroll').scrollTop=detailScroll;
+}
+async function changeLanguage(language) {
+  if(!['zh-CN','en'].includes(language) || LANGUAGE_BUSY) { $('ui-language').value=I18N.language; return; }
+  const previous=I18N.language, revision=++LANGUAGE_REV; LANGUAGE_BUSY=true; I18N.set(language); repaintLanguage();
+  $('ui-language').setAttribute('aria-busy','true');
+  try {
+    if(!window.pywebview?.api) return; // 浏览器离线查看时仅保存本机语言偏好。
+    const result=await act('set_language',{language});
+    if(revision!==LANGUAGE_REV) return;
+    if(result?.ok) { if(CURRENT) CURRENT.settings={...CURRENT.settings,language}; toast(tr('语言已保存')); }
+    else { I18N.set(previous); repaintLanguage(); toast(tr('语言保存失败：')+errorText(result),true); }
+  } finally { LANGUAGE_BUSY=false; $('ui-language').removeAttribute('aria-busy'); $('ui-language').value=I18N.language; tick(); }
+}
+$('ui-language').addEventListener('change',e=>changeLanguage(e.target.value));
+function initSettings(st) {
+  const settings=st.settings || {}; for(const key of ['block','quarantine']) if(!SW_BUSY[key]) { SW[key]=!!settings[key]; paintSwitch('sw-'+key,SW[key]); }
+  const roots=Array.isArray(settings.roots)?settings.roots.filter(r=>r && typeof r.path==='string'):[];
+  $('roots-count').textContent=roots.length+tr(' 个文件夹');
+  updateHTML('settings-roots',roots.length?roots.map((r,i)=>'<div class="root-row" data-od-id="folder-row-'+i+'">'+icon('folder')+'<div class="root-text"><p>'+escapeHtml(basename(r.path))+(r.builtin?uiMarkup('<span class="badge">内置</span>'):'')+'</p><small>'+escapeHtml(r.path)+'</small></div><button type="button" class="btn ghost remove-root" data-path="'+escapeHtml(r.path)+'" aria-label="'+escapeHtml(tr('停止监听 ')+r.path)+'" data-od-id="remove-folder-'+i+uiMarkup('">移除</button></div>')).join(''):stateMessage(tr('尚未添加技能文件夹'),tr('添加一个包含技能的文件夹，开始监听变化。')));
+  $('data-dir-path').textContent='~/.skill-radar';
+}
+async function toggleSwitch(key,id,action,payloadKey,label) {
+  if(SW_BUSY[key] || !CONNECTED) return; const previous=SW[key], next=!previous;
+  SW_BUSY[key]=true; SW[key]=next; paintSwitch(id,next); paintAvailability();
+  try { const result=await act(action,{[payloadKey]:next}); if(result?.ok) toast(label+(next?tr('已开启'):tr('已关闭'))); else { SW[key]=previous; paintSwitch(id,previous); toast(tr('设置失败：')+errorText(result),true); } }
+  finally { SW_BUSY[key]=false; paintAvailability(); tick(); }
+}
+function renderUsageDetail() {
+  const emptySummary='<div class="card usage-summary">'+[tr('已展示技能的调用合计'),tr('有调用记录的技能'),tr('最近记录日期')].map(label=>'<div><span class="lbl">'+label+'</span><div class="num">—</div></div>').join('')+'</div>';
+  if(USAGE_PHASE==='loading' || USAGE_PHASE==='idle') { updateHTML('usage-bars',emptySummary); updateHTML('usage-detail',stateMessage(tr('正在读取调用记录'),tr('请稍候。'),'chart-no-axes-combined')); return; }
+  if(USAGE_PHASE==='error') { updateHTML('usage-bars',emptySummary); updateHTML('usage-detail',stateMessage(tr('调用记录读取失败'),errorText({error:USAGE_ERROR}),'triangle-alert')); return; }
+  if(!USAGE_ROWS?.length) { updateHTML('usage-bars',emptySummary); updateHTML('usage-detail',stateMessage(tr('暂无调用记录'),tr('当前客户端未读取到记录。已有调用记录需要由本机的调用监测功能提供。'),'chart-no-axes-combined')); return; }
+  const rows=[...USAGE_ROWS].sort((a,b)=>count(b.total)-count(a.total)), total=rows.reduce((sum,r)=>sum+count(r.total),0), max=Math.max(1,...rows.map(r=>count(r.total))), dates=rows.map(r=>String(r.last||'')).filter(Boolean).sort();
+  updateHTML('usage-bars',uiMarkup('<div class="card usage-summary" data-od-id="usage-summary-card"><div><span class="lbl">已展示技能的调用合计</span><div class="num">')+escapeHtml(number(total))+uiMarkup('<small>次</small></div></div><div><span class="lbl">有调用记录的技能</span><div class="num">')+escapeHtml(number(rows.filter(r=>count(r.total)>0).length))+uiMarkup('<small>个</small></div></div><div><span class="lbl">最近记录日期</span><div class="num" style="font-size:19px;margin-top:12px">')+escapeHtml(dates.at(-1)||tr('未记录'))+'</div></div></div>');
+  const bars=rows.slice(0,5).map((r,i)=>'<div class="usage-row" data-od-id="usage-bar-'+i+'"><span class="usage-rank">'+String(i+1).padStart(2,'0')+'</span><span class="usage-lbl">'+escapeHtml(r.name)+'</span><div class="bar" role="img" aria-label="'+escapeHtml(r.name+tr(' 已记录 ')+number(r.total)+tr(' 次调用'))+'"><span style="width:'+Math.max(0,Math.min(100,count(r.total)/max*100))+'%"></span></div><span class="usage-num">'+escapeHtml(number(r.total))+'</span></div>').join('');
+  const table=rows.map((r,i)=>'<tr data-od-id="usage-detail-row-'+i+'"><td>'+escapeHtml(r.name)+'</td><td class="numeric">'+escapeHtml(number(r.total))+'</td><td class="numeric">'+escapeHtml(number(r.zcode))+'</td><td class="numeric">'+escapeHtml(number(r.claude))+'</td><td class="numeric">'+escapeHtml(number(r.marker))+'</td><td>'+escapeHtml(r.last||tr('未记录'))+'</td></tr>').join('');
+  updateHTML('usage-detail','<div class="usage-list">'+bars+uiMarkup('</div><table class="usage-table" aria-label="各技能调用明细"><colgroup><col style="width:29%"><col style="width:11%"><col style="width:12%"><col style="width:12%"><col style="width:13%"><col style="width:23%"></colgroup><thead><tr><th scope="col">技能</th><th scope="col" class="numeric">合计</th><th scope="col" class="numeric">ZCode</th><th scope="col" class="numeric">Claude</th><th scope="col" class="numeric">会话标记</th><th scope="col">最近记录</th></tr></thead><tbody>')+table+'</tbody></table>');
+}
+async function loadUsage() {
+  if(USAGE_PHASE==='loading') return; USAGE_PHASE='loading'; renderUsageDetail(); paintAvailability();
+  try { const result=await act('get_usage',{}); if(result?.ok && Array.isArray(result.rows)) { USAGE_ROWS=result.rows.filter(r=>r && typeof r==='object'); USAGE_PHASE='ready'; } else { USAGE_PHASE='error'; USAGE_ERROR=result?.error || result?.output || '客户端未返回成功结果'; } }
+  finally { renderUsageDetail(); paintAvailability(); }
+}
+function drawerFocusable() { return [...$('drawer').querySelectorAll('button, input, a[href], [tabindex]')].filter(el=>!el.disabled && !el.hidden && !el.closest('[hidden]') && el.tabIndex>=0); }
+function renderDrawer() {
+  const row=CURRENT?.skills?.[DRAWER_SKILL];
+  if(!row) { $('drawer-title').textContent=tr('检查记录已更新'); $('drawer-body').innerHTML=stateMessage(tr('该技能已不在当前记录中'),tr('关闭详情后刷新检查结果。'),'shield-check'); $('btn-accept').hidden=true; paintAvailability(); return; }
+  $('drawer-title').textContent=row.name || basename(DRAWER_SKILL); const findings=Array.isArray(row.findings)?row.findings:[];
+  const findingHTML=findings.length?findings.map((f,i)=>{
+    const severity={CRITICAL:[tr('严重风险'),'crit'],HIGH:[tr('高风险'),'warn'],MEDIUM:[tr('中等风险'),'warn'],LOW:[tr('低风险'),'ok'],INFO:[tr('提示'),'ok']}[f.severity] || [tr('风险提示'),'warn'];
+    const refs=Array.isArray(f.refs)?f.refs:[];
+    const original=f.message && I18N.findingText(f)!==f.message?'<details class="note"><summary>'+escapeHtml(tr('原始说明'))+'</summary><p>'+escapeHtml(f.message)+'</p></details>':'';
+    return '<article class="finding" data-od-id="finding-'+i+'"><div class="finding-top"><span class="badge '+severity[1]+'">'+severity[0]+'</span><span class="rule-id">'+escapeHtml(tr('出处：'))+escapeHtml(f.rule_id || tr('未提供编号'))+(refs.length?' · '+refs.map(escapeHtml).join(' · '):'')+'</span></div><p>'+escapeHtml(I18N.findingText(f))+'</p><div class="finding-location">'+icon('file-code-2')+'<span>'+escapeHtml(f.file || tr('文件位置未提供'))+(f.line!=null?tr(' · 第 ')+escapeHtml(f.line)+tr(' 行'):'')+'</span></div>'+original+(f.excerpt?'<pre class="diff-pre">'+escapeHtml(f.excerpt)+'</pre>':uiMarkup('<p class="note">该条检查未提供代码片段。</p>'))+'</article>';
+  }).join(''):uiMarkup('<div class="detail-empty"><h3>未命中当前风险规则</h3><p>本次检查未命中已知规则，不代表绝对安全。请继续核对技能来源、文件内容和所需权限。</p></div>');
+  const output=DIFF_OUTPUT!==null?uiMarkup('<div class="diff-section" data-od-id="content-diff"><h3>内容变更</h3><p class="note">文件位置与代码保留客户端原始输出。</p><pre class="diff-pre">')+escapeHtml(I18N.outputText(DIFF_OUTPUT))+'</pre></div>':'';
+  updateHTML('drawer-body','<div class="detail-summary">'+statusBadge(row)+uiMarkup('<span class="badge">风险分 ')+escapeHtml(number(row.score))+uiMarkup('</span></div><span class="detail-label">技能文件夹 · 完整位置</span><div class="detail-location">')+escapeHtml(DRAWER_SKILL)+'</div><p class="detail-reason">'+escapeHtml(row.reason ? I18N.reasonText(row.reason,row) : DRAWER_NOTE ? I18N.eventText({kind:row.status==='drifted'?'drift':'new',text:DRAWER_NOTE}) : tr('请根据下面的检查结果核对技能内容。'))+uiMarkup('</p><div class="findings-title"><h3>规则检查结果</h3><span class="muted" style="font-size:11px">')+findings.length+tr(' 项提示')+'</span></div>'+findingHTML+output);
+  const changed=row.status==='drifted'; $('btn-accept').hidden=!changed;
+  $('accept-help').textContent=changed?tr('确认会更新内容检查记录；不会忽略现有风险提示。'):tr('检查只覆盖当前规则；使用前仍需确认来源、内容与权限。');
+  paintAvailability();
+}
+function openDrawer(skill,note='',opener=document.activeElement) {
+  if(!Object.hasOwn(CURRENT?.skills || {},skill)) return;
+  DRAWER_SKILL=skill; DRAWER_NOTE=note; DRAWER_OPENER=opener; DRAWER_TOKEN++; DIFF_OUTPUT=null; DRAWER_ACTION_STATUS=null;
+  $('drawer-status').hidden=true; renderDrawer(); $('drawer').hidden=false; $('drawer-backdrop').hidden=false;
+  $('drawer').setAttribute('aria-hidden','false'); $('drawer').classList.add('open');
+  document.body.classList.add('drawer-open');
+  $('btn-close-drawer').focus({preventScroll:true}); $('app-layout').inert=true; $('app-layout').setAttribute('aria-hidden','true'); $('drawer-scroll').scrollTop=0;
+}
+function closeDrawer() {
+  if($('drawer').hidden) return; const skill=DRAWER_SKILL, opener=DRAWER_OPENER;
+  DRAWER_SKILL=null; DRAWER_NOTE=''; DRAWER_TOKEN++; $('drawer').hidden=true; $('drawer-backdrop').hidden=true;
+  $('drawer').classList.remove('open'); $('drawer').setAttribute('aria-hidden','true'); $('app-layout').inert=false; $('app-layout').removeAttribute('aria-hidden');
+  document.body.classList.remove('drawer-open');
+  const replacement=[...$('screen-'+ACTIVE_SCREEN).querySelectorAll('[data-skill]')].find(el=>el.dataset.skill===skill);
+  const target=opener?.isConnected && !opener.hidden?opener:replacement || document.querySelector('.nav-btn.active'); target?.focus({preventScroll:true});
+}
+async function runDrawerAction(name,label) {
+  if(DRAWER_BUSY || !DRAWER_SKILL || !CONNECTED) return;
+  const skill=DRAWER_SKILL, token=DRAWER_TOKEN; DRAWER_BUSY=true; paintAvailability();
+  DRAWER_ACTION_STATUS={name,phase:'busy'}; paintDrawerStatus();
+  try {
+    const result=await act(name,{skill});
+    if(result?.ok) {
+      if(token===DRAWER_TOKEN && skill===DRAWER_SKILL) { DIFF_OUTPUT=result.output || ''; renderDrawer(); DRAWER_ACTION_STATUS={name,phase:'done'}; paintDrawerStatus(); }
+      toast(drawerActionTitle(name)+tr('完成')); tick();
+    } else {
+      if(token===DRAWER_TOKEN && skill===DRAWER_SKILL) { DRAWER_ACTION_STATUS={name,phase:'error',result}; paintDrawerStatus(); }
+      toast(drawerActionTitle(name)+tr('失败：')+errorText(result),true);
+    }
+  } finally { DRAWER_BUSY=false; paintAvailability(); if(DRAWER_SKILL) renderDrawer(); }
+}
+function drawerActionTitle(name) { return tr(name==='show_diff'?'查看内容变更':'确认本次变化'); }
+function paintDrawerStatus() {
+  if(!DRAWER_ACTION_STATUS || !DRAWER_SKILL) return;
+  const {name,phase,result}=DRAWER_ACTION_STATUS, target=$('drawer-status');
+  target.hidden=false; target.className='inline-status'+(phase==='error'?' error':'');
+  target.textContent=phase==='error'?tr('处理失败：')+errorText(result):drawerActionTitle(name)+tr(phase==='busy'?'处理中，请稍候。':'完成。');
+}
+async function runAction(name,button,label,payload={},key=button.id) {
+  if(!CONNECTED || PENDING.has(key)) return; PENDING.add(key); PENDING.add(button.id); paintAvailability();
+  const old=button.innerHTML; button.textContent=tr('处理中…'); button.setAttribute('aria-busy','true');
+  try { const result=await act(name,payload); if(result?.ok) { toast(name==='rescan'?tr('已安排 ')+number(result.queued || 0)+tr(' 个技能重新检查；结果稍后更新'):label); tick(); } else toast(tr('操作失败：')+errorText(result),true); }
+  finally { PENDING.delete(key); PENDING.delete(button.id); button.innerHTML=old; I18N.apply(); button.removeAttribute('aria-busy'); paintAvailability(); }
+}
+function switchScreen(name) {
+  if(!['overview','security','usage','settings'].includes(name)) return; if(DRAWER_SKILL) closeDrawer(); ACTIVE_SCREEN=name;
+  document.querySelectorAll('.nav-btn').forEach(b=>{ const active=b.dataset.screen===name; b.classList.toggle('active',active); if(active)b.setAttribute('aria-current','page'); else b.removeAttribute('aria-current'); });
+  document.querySelectorAll('main section').forEach(s=>s.classList.toggle('active',s.id==='screen-'+name));
+  $('breadcrumb-current').textContent=screenTitle(name); $('main-content').scrollTop=0;
+  try{localStorage.setItem('skillradar-screen',name);}catch{} if(name==='usage')loadUsage();
+}
+function bindRowClicks(id) {
+  $(id).addEventListener('click',e=>{const row=e.target.closest('tr[data-skill]'); if(row)openDrawer(row.dataset.skill,row.dataset.note,row);});
+  $(id).addEventListener('keydown',e=>{const row=e.target.closest('tr[data-skill]'); if(row && (e.key==='Enter'||e.key===' ')) {e.preventDefault(); openDrawer(row.dataset.skill,row.dataset.note,row);}});
+}
+document.querySelectorAll('.nav-btn').forEach(button=>button.addEventListener('click',()=>switchScreen(button.dataset.screen)));
+bindRowClicks('ov-events'); bindRowClicks('sec-rows');
+$('btn-close-drawer').addEventListener('click',closeDrawer); $('drawer-backdrop').addEventListener('click',closeDrawer);
+document.addEventListener('keydown',e=>{
+  if($('drawer').hidden) return;
+  if(e.key==='Escape'){e.preventDefault();closeDrawer();return;}
+  if(e.key==='Tab'){const controls=drawerFocusable(), first=controls[0], last=controls.at(-1); if(!first){e.preventDefault();$('drawer').focus();}else if(e.shiftKey && (document.activeElement===first||!$('drawer').contains(document.activeElement))){e.preventDefault();last.focus();}else if(!e.shiftKey && (document.activeElement===last||!$('drawer').contains(document.activeElement))){e.preventDefault();first.focus();}}
 });
-function bindRowClicks(id){
-  $(id).addEventListener('click', e => {
-    const tr = e.target.closest('tr');
-    if (tr && tr.dataset && tr.dataset.skill) openDrawer(tr.dataset.skill, tr.dataset.note);
-  });
-}
-bindRowClicks('ov-events');
-bindRowClicks('sec-rows');
-$('btn-show-diff').onclick = () => runDrawerAction('show_diff', 'Show diff 查看变更');
-$('btn-accept').onclick = () => runDrawerAction('accept_drift', 'Accept drift 接受漂移');
-$('btn-open-data').onclick = async () => {
-  const r = await act('open_data_dir', {});
-  toast(r && r.ok ? '已打开数据目录 Data directory opened'
-                  : '打开失败 failed: ' + ((r && r.error) || ''));
-};
-/* 终审 I-2：Overview 屏 paused 时显示恢复按钮，与托盘动态菜单项同一 act 通道 */
-$('ov-resume').onclick = async () => {
-  const r = await act('resume', {});
-  if (r && r.ok) { toast('守护已恢复 Guard resumed'); tick(); }
-  else { toast('恢复失败 failed: ' + ((r && r.error) || '')); }
-};
-function bindSwitch(id, fn){
-  const el = $(id);
-  el.addEventListener('click', fn);
-  el.addEventListener('keydown', e => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); }
-  });
-}
-bindSwitch('sw-block',
-  () => toggleSwitch('block', 'sw-block', 'set_mode', 'block', '拦截模式 Block mode'));
-bindSwitch('sw-quarantine',
-  () => toggleSwitch('quarantine', 'sw-quarantine', 'set_quarantine', 'on', '隔离 Quarantine'));
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
-closeDrawer();   // 初始 aria-hidden="true"（抽屉初始在屏外，避免读屏读到）
-tick(); setInterval(tick, 2000);
+document.addEventListener('focusin',e=>{if(!$('drawer').hidden && !$('drawer').contains(e.target)) $('btn-close-drawer').focus({preventScroll:true});});
+$('btn-show-diff').addEventListener('click',()=>runDrawerAction('show_diff',tr('查看内容变更')));
+$('btn-accept').addEventListener('click',()=>runDrawerAction('accept_drift',tr('确认本次变化')));
+$('sw-block').addEventListener('click',()=>toggleSwitch('block','sw-block','set_mode','block',tr('高风险处理')));
+$('sw-quarantine').addEventListener('click',()=>toggleSwitch('quarantine','sw-quarantine','set_quarantine','on',tr('隔离处理')));
+$('btn-open-data').addEventListener('click',()=>runAction('open_data_dir',$('btn-open-data'),tr('已打开本机数据文件夹')));
+$('ov-resume').addEventListener('click',()=>runAction('resume',$('ov-resume'),tr('守护已恢复')));
+$('btn-pause').addEventListener('click',()=>runAction('pause',$('btn-pause'),tr('守护已暂停')));
+$('btn-rescan').addEventListener('click',()=>runAction('rescan',$('btn-rescan'),'',{},'rescan'));
+$('btn-sec-rescan').addEventListener('click',()=>runAction('rescan',$('btn-sec-rescan'),'',{},'rescan'));
+$('btn-retry').addEventListener('click',tick); $('btn-refresh-usage').addEventListener('click',loadUsage);
+$('skill-search').addEventListener('input',renderSecurity);
+document.querySelectorAll('.filter').forEach(b=>b.addEventListener('click',()=>{FILTER=b.dataset.filter;document.querySelectorAll('.filter').forEach(x=>{x.classList.toggle('active',x===b);x.setAttribute('aria-pressed',x===b?'true':'false');});renderSecurity();}));
+$('root-form').addEventListener('submit',async e=>{
+  e.preventDefault(); if(PENDING.has('roots') || !CONNECTED)return; const path=$('root-path').value.trim();
+  if(!path || /[\r\n\x00]/.test(path) || !/^(?:[A-Za-z]:[\\/]|\\\\[^\\]+\\[^\\]+|\/|~[\\/])/.test(path)) { $('root-error').hidden=false; delete $('root-error').dataset.error; $('root-error').textContent=tr('请填写完整的文件夹路径，例如 C:\\Users\\你的用户名\\.agents\\skills'); $('root-path').setAttribute('aria-invalid','true'); $('root-path').focus(); return; }
+  $('root-error').hidden=true; delete $('root-error').dataset.error; $('root-path').removeAttribute('aria-invalid'); PENDING.add('roots'); paintAvailability(); $('root-path').disabled=true;
+  try{const result=await act('add_root',{path});if(result?.ok){$('root-path').value='';toast(tr('已添加技能文件夹'));tick();}else{$('root-error').hidden=false;$('root-error').dataset.error=result?.error || result?.output || '客户端未返回成功结果'; $('root-error').textContent=tr('添加失败：')+errorText(result);toast(tr('添加失败：')+errorText(result),true);}}
+  finally{PENDING.delete('roots');$('root-path').disabled=false;paintAvailability();}
+});
+$('settings-roots').addEventListener('click',async e=>{const b=e.target.closest('button.remove-root');if(!b || PENDING.has('roots') || !CONNECTED)return;await runAction('remove_root',b,tr('已停止监听该文件夹，文件保留'),{path:b.dataset.path},'roots');});
+updateHTML('ov-tiles',[tr('技能文件夹'),tr('今日新增技能'),tr('今日内容有变化'),tr('今日高风险提醒')].map((label,i)=>metric(label,null,'overview-loading-'+i)).join(''));
+updateHTML('sec-tiles',[tr('已记录技能'),tr('有严重风险'),tr('内容有变化'),tr('新技能待确认')].map((label,i)=>metric(label,null,'security-loading-'+i)).join(''));
+I18N.set(I18N.language); I18N.apply(); renderUsageDetail(); paintAvailability();
+try{switchScreen(localStorage.getItem('skillradar-screen') || 'overview');}catch{switchScreen('overview');}
+window.addEventListener('pywebviewready',()=>{tick();if(ACTIVE_SCREEN==='usage' && USAGE_PHASE!=='loading')loadUsage();});
+tick(); setInterval(tick,2000);
 </script>
-</body></html>
+</body>
+</html>

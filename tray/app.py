@@ -29,11 +29,36 @@ import skill_guard as sg            # noqa: E402
 from tray.state import TrayState    # noqa: E402
 from tray.daemon import Daemon      # noqa: E402
 from tray import alerts             # noqa: E402
+from tray.branding import asset_path, tray_icon  # noqa: E402
 
-# 图标：1x1 PNG 放大后纯色渲染（避免二进制资产入仓；pystray 接受 PIL 之外
-# 的 icon 参数在无 PIL 环境受限——见 _install_gui_stubs 注释）
-ICON_COLORS = {"running": (30, 41, 59), "alert": (220, 38, 38),
-               "quarantine": (217, 119, 6), "paused": (100, 116, 139)}
+_CLIENT_COPY = {
+    "zh-CN": {
+        "open": "打开界面", "rescan": "立即检查", "pause": "暂停检查",
+        "resume": "继续检查", "quit": "退出",
+        "changed": "内容有变化", "critical": "发现严重风险", "new": "发现新技能",
+        "isolated": "技能已隔离", "isolate_failed": "隔离失败",
+        "manual_review": "请查看详情并手动处理",
+    },
+    "en": {
+        "open": "Open SkillRadar", "rescan": "Check now", "pause": "Pause checks",
+        "resume": "Resume checks", "quit": "Quit",
+        "changed": "Skill content changed", "critical": "Serious risk found",
+        "new": "New skill found", "isolated": "Skill isolated",
+        "isolate_failed": "Could not isolate skill",
+        "manual_review": "Review the details and handle it manually",
+    },
+}
+
+
+def _ui_language(cfg=None):
+    """读取已保存的界面语言，旧配置及不支持的语言默认使用中文。"""
+    language = (sg.load_config() if cfg is None else cfg).get("ui_language", "zh-CN")
+    return language if language in ("zh-CN", "en") else "zh-CN"
+
+
+def _client_text(key, cfg=None):
+    """托盘菜单及系统通知共用当前语言，技能名称和文件路径保持原样。"""
+    return _CLIENT_COPY[_ui_language(cfg)][key]
 
 
 class JsBridge:
@@ -43,9 +68,16 @@ class JsBridge:
         self.daemon = daemon
         self.state = state
         self.runtime = runtime   # 持托盘图标/窗口引用，供动作调用
+        self._settings_lock = threading.RLock()
 
     def get_state(self):
-        return self.state.snapshot()
+        snap = self.state.snapshot()
+        cfg = sg.load_config()
+        snap["settings"] = {"block": self.daemon.mode == "block",
+                            "quarantine": bool(cfg.get("consent", {}).get("quarantine")),
+                            "roots": cfg.get("roots", []),
+                            "language": _ui_language(cfg)}
+        return snap
 
     def act(self, name, payload=None):
         handlers = {
@@ -53,12 +85,19 @@ class JsBridge:
             "rescan": self._rescan, "open_data_dir": self._open_data_dir,
             "show_diff": self._show_diff, "accept_drift": self._accept_drift,
             "set_mode": self._set_mode, "set_quarantine": self._set_quarantine,
+            "set_language": self._set_language,
             "get_usage": self._get_usage,
+            "add_root": self._add_root, "remove_root": self._remove_root,
         }
         h = handlers.get(name)
         if h is None:
             return {"error": "unknown action"}
-        return h(payload or {})
+        if payload is not None and not isinstance(payload, dict):
+            return {"error": "payload must be an object"}
+        try:
+            return h(payload or {})
+        except (OSError, ValueError, TypeError) as e:
+            return {"error": sg._sanitize(str(e))}
 
     def _pause(self, _):
         self.state.set_guard("paused")
@@ -66,6 +105,7 @@ class JsBridge:
 
     def _resume(self, _):
         self.state.set_guard("running")
+        self._rescan({})   # 暂停期间到期事件已丢弃，恢复时补扫防漏检。
         return {"ok": True, "guard": "running"}
 
     def _rescan(self, _):
@@ -73,14 +113,9 @@ class JsBridge:
         # mark_dirty("…/SKILL.md") 经 locate_changed_skill 向上找不到技能——
         # 对池式根是静默 no-op。改为枚举根下含 SKILL.md 的技能子目录逐一投递。
         n = 0
-        for r in self.daemon.roots:
-            if not os.path.isdir(r):
-                continue
-            for entry in os.listdir(r):
-                skill = os.path.join(r, entry)
-                if os.path.isfile(os.path.join(skill, "SKILL.md")):
-                    self.daemon.mark_dirty(skill, "manual rescan")
-                    n += 1
+        for skill in sg.iter_skill_dirs(self.daemon.roots):
+            self.daemon.mark_dirty(skill, "manual rescan")
+            n += 1
         return {"ok": True, "queued": n}
 
     def _open_data_dir(self, _):
@@ -97,12 +132,32 @@ class JsBridge:
             return {"error": str(e)}
 
     def _show_diff(self, payload):
-        skill = str(payload.get("skill", ""))
-        return self._run_guard(["audit", "--show-diff", skill])
+        skill = self._selected_skill(payload)
+        if skill is None:
+            return {"error": "select a registered skill by its full path"}
+        with self.daemon.scan_lock:
+            return self._run_guard(["audit", "--show-diff", skill])
 
     def _accept_drift(self, payload):
-        skill = str(payload.get("skill", ""))
-        return self._run_guard(["audit", "--accept-drift", skill])
+        skill = self._selected_skill(payload)
+        if skill is None:
+            return {"error": "select a registered skill by its full path"}
+        with self.daemon.scan_lock:
+            result = self._run_guard(["audit", "--accept-drift", skill])
+            if result.get("ok"):
+                self.daemon.scan_changed_skill(skill)
+        return result
+
+    def _selected_skill(self, payload):
+        """名称可在多根重复；只接受当前风险表中的完整注册路径。"""
+        requested = payload.get("skill")
+        if not isinstance(requested, str) or not os.path.isabs(requested):
+            return None
+        for path in self.state.snapshot()["skills"]:
+            if sg._canon_path(path) == sg._canon_path(requested) \
+                    and any(self.daemon._under(path, root) for root in self.daemon.roots):
+                return path
+        return None
 
     @staticmethod
     def _run_guard(args):
@@ -145,17 +200,71 @@ class JsBridge:
                 "output": (buf_out.getvalue() + buf_err.getvalue())[-4000:]}
 
     def _set_mode(self, payload):
-        cfg = sg.load_config()
-        cfg.setdefault("consent", {})["add_block"] = bool(payload.get("block"))
-        sg.save_config(cfg)
-        self.daemon.mode = "block" if payload.get("block") else "warn"
+        with self._settings_lock:
+            cfg = sg.load_config()
+            cfg.setdefault("consent", {})["add_block"] = bool(payload.get("block"))
+            sg.save_config(cfg)
+            self.daemon.mode = "block" if payload.get("block") else "warn"
         return {"ok": True, "mode": self.daemon.mode}
 
     def _set_quarantine(self, payload):
-        cfg = sg.load_config()
-        cfg.setdefault("consent", {})["quarantine"] = bool(payload.get("on"))
-        sg.save_config(cfg)
+        with self._settings_lock:
+            cfg = sg.load_config()
+            cfg.setdefault("consent", {})["quarantine"] = bool(payload.get("on"))
+            sg.save_config(cfg)
         return {"ok": True}
+
+    def _set_language(self, payload):
+        """保存界面语言并刷新托盘菜单，立即生效且重启后保留选择。"""
+        language = payload.get("language")
+        if language not in ("zh-CN", "en"):
+            return {"error": "choose zh-CN or en"}
+        with self._settings_lock:
+            cfg = sg.load_config()
+            cfg["ui_language"] = language
+            sg.save_config(cfg)
+        if self.runtime.icon is not None:
+            try:
+                _on_gui_thread(self.runtime.icon.update_menu)
+            except Exception:
+                pass  # 菜单后端暂时不可用不影响已保存的语言选择。
+        return {"ok": True, "language": language}
+
+    def _add_root(self, payload):
+        return self._change_root(payload, remove=False)
+
+    def _remove_root(self, payload):
+        return self._change_root(payload, remove=True)
+
+    def _change_root(self, payload, remove):
+        """根注册写回 CLI 配置后替换监听器；不存在的根由平台监听器等待。"""
+        path = payload.get("path")
+        if not isinstance(path, str) or not path.strip() \
+                or any(c in path for c in "\r\n\x00"):
+            return {"error": "provide an absolute root path"}
+        path = os.path.expanduser(path.strip())
+        if not os.path.isabs(path):
+            return {"error": "provide an absolute root path"}
+        path = os.path.normpath(path)
+        with self._settings_lock:
+            cfg = sg.load_config()
+            records = [r for r in cfg.get("roots", [])
+                       if isinstance(r, dict) and isinstance(r.get("path"), str)]
+            existing = [r for r in records if sg._canon_path(r["path"]) == sg._canon_path(path)]
+            if remove:
+                records = [r for r in records if r not in existing]
+            elif not existing:
+                records.append({"path": path, "builtin": False})
+            cfg["roots"] = records
+            sg.save_config(cfg)
+            self.daemon.roots = [os.path.normpath(r["path"]) for r in records]
+            self.state.watched_roots = len(self.daemon.roots)
+            if self.runtime.watcher is not None:
+                _stop_watcher(self.runtime.watcher)
+                _start_watcher(self.runtime, self.daemon)
+            if not remove and os.path.isdir(path):
+                self._rescan({})
+        return {"ok": True, "roots": records}
 
     def _get_usage(self, _):
         # 终审 I-3：Usage 屏数据源。读 config 的 usage_file（覆盖键，冻结 exe
@@ -176,18 +285,25 @@ class JsBridge:
                     data = json.load(f)
             except (OSError, ValueError):
                 data = {}
+        skills = data.get("skills") if isinstance(data, dict) else None
+        if not isinstance(skills, dict):
+            return {"ok": True, "rows": []}
         rows = []
-        for name, s in (data.get("skills") or {}).items():
+        for name, s in skills.items():
             if not isinstance(s, dict):
                 continue
-            zcode, claude, marker = (int(s.get("zcode", 0) or 0),
+            try:
+                zcode, claude, marker = (int(s.get("zcode", 0) or 0),
                                      int(s.get("claude", 0) or 0),
                                      int(s.get("marker", 0) or 0))
+                atime = int(s.get("atime", 0) or 0)
+            except (ValueError, TypeError, OverflowError):
+                continue
             rows.append({"name": str(name), "total": zcode + claude + marker,
                          "zcode": zcode, "claude": claude, "marker": marker,
-                         "atime": int(s.get("atime", 0) or 0),
-                         "last": (s.get("last_tool_use")
-                                  or s.get("last_marker") or "")[:10]})
+                         "atime": atime,
+                         "last": str(s.get("last_tool_use")
+                                     or s.get("last_marker") or "")[:10]})
         rows.sort(key=lambda r: (-r["total"], r["name"]))
         return {"ok": True, "rows": rows[:25]}
 
@@ -201,8 +317,24 @@ def build_runtime(roots, mode):
     runtime = types.SimpleNamespace(icon=None, window=None, watcher=None)
     bridge = JsBridge(daemon, state, runtime)
 
+    def _icon_notify(t, m):
+        if runtime.icon:
+            try:
+                runtime.icon.notify(m, t)
+            except Exception:
+                pass
+
+    def _on_alert(skill_path, rep, status):
+        """警告模式同样弹通知；通知失败不能中断快照与守护。"""
+        critical = any(f.severity == "CRITICAL" for f in rep.findings)
+        key = "critical" if critical else "changed" if status == "DRIFT" else "new"
+        title = "SkillRadar · " + _client_text(key)
+        try:
+            alerts.toast(title, os.path.basename(skill_path), notify=_icon_notify)
+        except Exception as e:
+            state.add_event("error", f"通知失败: {e}")
+
     def _on_block(skill_path, rep):
-        verdict = "CRITICAL"
         cfg = sg.load_config()
 
         def _icon_notify(t, m):
@@ -217,20 +349,23 @@ def build_runtime(roots, mode):
 
         if cfg.get("consent", {}).get("quarantine"):
             dest = alerts.quarantine_skill(skill_path, allowed_roots=daemon.roots)
-            alerts.toast("skill-radar 已隔离技能",
-                         f"{os.path.basename(skill_path)}（{verdict}）"
-                         if dest else f"隔离失败，请人工处理 {skill_path}",
+            title = "SkillRadar · " + _client_text("isolated" if dest else "isolate_failed", cfg)
+            message = os.path.basename(skill_path) if dest else \
+                _client_text("manual_review", cfg) + " · " + skill_path
+            alerts.toast(title, message,
                          notify=_icon_notify)
             # 事件文案与 toast 同口径：隔离失败如实记，不伪造"已隔离 → None"
             if dest:
+                state.set_guard("quarantine")   # 只有移动成功才显示隔离状态。
                 state.add_event("quarantine", f"已隔离 {skill_path} → {dest}")
             else:
                 state.add_event("quarantine", f"隔离失败，请人工处理 {skill_path}")
         else:
-            alerts.toast("skill-radar 检出 CRITICAL", f"{os.path.basename(skill_path)}",
+            alerts.toast("SkillRadar · " + _client_text("critical", cfg), os.path.basename(skill_path),
                          notify=_icon_notify)
 
     daemon.on_block = _on_block
+    daemon.on_alert = _on_alert
 
     def _on_fs_event(abs_path):
         daemon.mark_dirty(abs_path)
@@ -238,6 +373,40 @@ def build_runtime(roots, mode):
     runtime.daemon = daemon   # shutdown 停机序列用（stop + join consume）
     runtime._on_fs_event = _on_fs_event
     return daemon, state, bridge
+
+
+def _stop_watcher(watcher):
+    """先取消事件源，再等待平台线程，避免替换根时留下旧监听。"""
+    watcher.stop()
+    for thread in list(getattr(watcher, "_threads", None) or []):
+        if thread is not threading.current_thread():
+            thread.join(timeout=5)
+
+
+def _start_watcher(runtime, daemon):
+    from tray import watchers
+    watcher = watchers.pick_backend()(daemon.roots, callback=runtime_event(daemon))
+    runtime.watcher = watcher
+
+    def start():
+        try:
+            watcher.start()
+        except Exception as e:
+            daemon.state.add_event("error", f"目录监听启动失败: {e}")
+            daemon.state.set_guard("alert")
+
+    thread = threading.Thread(target=start, daemon=True)
+    runtime.watcher_thread = thread
+    thread.start()
+
+
+def _on_gui_thread(fn, *args):
+    """macOS 的 NSStatusItem/UI 操作必须投递到宿主 NSApplication 主线程。"""
+    if sys.platform == "darwin" and threading.current_thread() is not threading.main_thread():
+        from PyObjCTools import AppHelper
+        AppHelper.callAfter(fn, *args)
+    else:
+        fn(*args)
 
 
 _STUBS_INSTALLED = False
@@ -274,7 +443,8 @@ def _mode_from_config(cfg):
 
 
 def _index_url():
-    return "file:///" + os.path.join(BASE, "tray", "web", "index.html").replace("\\", "/")
+    from pathlib import Path
+    return Path(BASE, "tray", "web", "index.html").resolve().as_uri()
 
 
 def _window_lifecycle(runtime, action):
@@ -330,6 +500,18 @@ def _reopen_window(bridge):
     runtime.window = w
 
 
+def _tray_menu(bridge, pystray):
+    """每次打开菜单时读取语言和暂停状态，无需重启客户端。"""
+    return pystray.Menu(
+        pystray.MenuItem(lambda item: _client_text("open"), lambda: _reopen_window(bridge)),
+        pystray.MenuItem(lambda item: _client_text("rescan"), lambda: bridge.act("rescan")),
+        pystray.MenuItem(
+            lambda item: _client_text("resume" if bridge.state.paused else "pause"),
+            lambda: bridge.act("resume" if bridge.state.paused else "pause")),
+        pystray.MenuItem(lambda item: _client_text("quit"), lambda: _handle_quit(bridge.runtime)),
+    )
+
+
 def main():
     import importlib.util
     for mod in ("pystray", "webview"):
@@ -339,47 +521,34 @@ def main():
             raise SystemExit("[SkillRadar Tray] 缺 GUI 依赖：pip install -r "
                              "requirements-gui.txt（核心五件 .py 仍然纯标准库）")
     cfg = sg.load_config()
-    roots = [r["path"] for r in cfg.get("roots", []) if os.path.isdir(r["path"])]
+    roots = [os.path.normpath(r["path"]) for r in cfg.get("roots", [])
+             if isinstance(r, dict) and isinstance(r.get("path"), str)]
     daemon, state, bridge = build_runtime(roots, _mode_from_config(cfg))
 
-    from tray import watchers
-    watcher_cls = watchers.pick_backend()
-    watcher = watcher_cls(roots, callback=runtime_event(daemon))
-    w_thread = threading.Thread(target=watcher.start, daemon=True)
-    w_thread.start()
+    _start_watcher(bridge.runtime, daemon)
     s_thread = threading.Thread(target=daemon.consume, daemon=True)
     s_thread.start()
     daemon.consume_thread = s_thread   # shutdown join consume 用（审查 Important-1）
 
     # 托盘（独立线程 detach；菜单四项，规格 §1b）。
-    # 图标：pystray 依赖 Pillow 的 Image——requirements-gui.txt 追加 pillow
-    #（pystray 的 Windows 后端本就要求它；16x16 纯色块由代码生成，无二进制资产）。
+    # 品牌图标始终保留雷达标识，状态圆点提示运行、待确认、严重风险及暂停。
     import pystray
-    from PIL import Image
-    img = Image.new("RGB", (16, 16), ICON_COLORS["running"])
-    def _set_icon_color(g):
-        icon.icon = Image.new("RGB", (16, 16), ICON_COLORS.get(g, ICON_COLORS["running"]))
+    img = tray_icon("running")
+    def _set_icon_state(g):
+        icon.icon = tray_icon(g)
         try:
             icon.update_menu()   # 动态暂停/恢复项随 guard 态重取文本（终审 I-2）
         except Exception:
             pass   # 图标未就绪（run_detached 前）时静默，文本下轮刷新
-    state.on_guard_change = _set_icon_color   # 告警变色钩子（托盘三色，规格 §1b）
+    state.on_guard_change = lambda g: _on_gui_thread(_set_icon_state, g)
     # 终审 I-2：「暂停守护」曾是死胡同（单向 Pause、UI 无恢复控件、resume 零
     # 调用方）。改为按当前态分发的动态项：pystray MenuItem 文本支持可调用
     # （update_menu 时重取），action 依 state.paused 分发 pause/resume——
     # 与 Overview 屏 paused 时显示的「恢复守护 Resume」按钮同一 act 通道。
-    menu = pystray.Menu(
-        pystray.MenuItem("打开界面 Open", lambda: _reopen_window(bridge)),
-        pystray.MenuItem("立即巡检 Rescan now", lambda: bridge.act("rescan")),
-        pystray.MenuItem(
-            lambda item: "恢复守护 Resume" if bridge.state.paused
-            else "暂停守护 Pause",
-            lambda: bridge.act("resume" if bridge.state.paused else "pause")),
-        pystray.MenuItem("退出 Quit", lambda: _handle_quit(bridge.runtime)),
-    )
-    icon = pystray.Icon("SkillRadar", img, "SkillRadar Tray", menu)
+    menu = _tray_menu(bridge, pystray)
+    icon = pystray.Icon("SkillRadar", img, "SkillRadar", menu)
     bridge.runtime.icon = icon
-    bridge.runtime.watcher = watcher
+    state.on_guard_change(state.guard)   # 恢复态与启动时已有告警必须同步图标。
 
     # 主线程：pywebview（mac 上 NSApplication 必须主线程，设计裁定 1）。
     # 关窗 = 缩托盘（closing 事件 veto → hide，规格 §1b / 审查 Important-2），
@@ -391,7 +560,9 @@ def main():
     bridge.runtime.window = ui
     ui.events.closing += lambda: _handle_ui_closing(bridge.runtime, ui)
     icon.run_detached()
-    webview.start()
+    bridge.act("rescan")   # 首屏已有技能也应显示风险记录。
+    # 当前 Windows WinForms 后端也读取 start(icon)；macOS 应用包图标由打包配置提供。
+    webview.start(icon=asset_path("skillradar.ico" if sys.platform == "win32" else "skillradar.png"))
     shutdown(bridge.runtime)   # start() 返回 = 退出流程收尾（shutdown 幂等）
 
 
@@ -412,9 +583,7 @@ def shutdown(runtime):
     runtime._shutdown_done = True
     watcher = getattr(runtime, "watcher", None)
     if watcher:
-        watcher.stop()
-        for t in list(getattr(watcher, "_threads", None) or []):
-            t.join(timeout=5)
+        _stop_watcher(watcher)
     daemon = getattr(runtime, "daemon", None)
     if daemon:
         daemon.stop()

@@ -7,17 +7,23 @@ import sys
 BASE = os.path.dirname(os.path.abspath(__file__))
 ENTRY = os.path.join(BASE, "tray", "app.py")
 WEB = os.path.join(BASE, "tray", "web")
-SEP = ";" if sys.platform == "win32" else ":"
+ASSETS = os.path.join(BASE, "tray", "assets")
 
 
 def pyinstaller_cmd():
-    add_data_web = f"{WEB}{SEP}tray/web"
-    add_data_rules = f"{os.path.join(BASE, 'rules')}{SEP}rules"
+    sep = ";" if sys.platform == "win32" else ":"
+    add_data_web = f"{WEB}{sep}tray/web"
+    add_data_rules = f"{os.path.join(BASE, 'rules')}{sep}rules"
+    add_data_assets = f"{ASSETS}{sep}tray/assets"
+    extension = ".icns" if sys.platform == "darwin" else ".ico"
+    icon = os.path.join(ASSETS, "skillradar" + extension)
     cmd = [sys.executable, "-m", "PyInstaller",
            "--noconfirm", "--windowed", "--name", "SkillRadarTray",
+           "--icon", icon,
            "--add-data", add_data_web,
            # rules/ 与核心 .py 打进包：守护在无源码环境也要能扫
            "--add-data", add_data_rules,
+           "--add-data", add_data_assets,
            "--paths", BASE, ENTRY]
     if sys.platform == "win32":
         cmd.insert(cmd.index("--windowed") + 1, "--onefile")

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512">
+<defs>
+  <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#23435A"/><stop offset="1" stop-color="#102536"/>
+  </linearGradient>
+  <linearGradient id="scan" x1="0" y1="1" x2="1" y2="0">
+    <stop offset="0" stop-color="#3FBF9B"/><stop offset="1" stop-color="#B5FFE0"/>
+  </linearGradient>
+</defs>
+<rect x="8" y="8" width="496" height="496" rx="120" fill="url(#tile)"/>
+<rect x="10" y="10" width="492" height="492" rx="118" fill="none" stroke="#416477" stroke-opacity=".48" stroke-width="4"/>
+<g transform="translate(72 66) scale(15.15)" fill="none" stroke="url(#scan)" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M19.07 4.93A10 10 0 0 0 6.99 3.34" />
+  <path d="M4 6h.01" />
+  <path d="M2.29 9.62A10 10 0 1 0 21.31 8.35" />
+  <path d="M16.24 7.76A6 6 0 1 0 8.23 16.67" />
+  <path d="M12 18h.01" />
+  <path d="M17.99 11.66A6 6 0 0 1 15.77 16.67" />
+  <circle cx="12" cy="12" r="2" />
+  <path d="m13.41 10.59 5.66-5.66" />
+</g>
+<circle cx="382" cy="390" r="79" fill="#102536" stroke="#385B6B" stroke-width="4"/>
+<g transform="translate(326 333) scale(4.65)" fill="none" stroke="#B5FFE0" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+  <path d="m9 12 2 2 4-4" />
+</g>
+</svg>
