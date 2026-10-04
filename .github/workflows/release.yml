@@ -76,7 +76,8 @@ jobs:
 
             - **SkillRadarTray.exe** — Windows 托盘守护（onefile，双击即用）
             - **SkillRadarTray.dmg / SkillRadarTray-macos.zip** — macOS 托盘守护
-              （未签名/未公证：首次打开需右键 → 打开，见 README；.zip 供 Gatekeeper 对 .app 的右键流程）
+              （未签名/未公证：下载后首次启动会被 Gatekeeper 拦截——macOS 13/14 右键 → 打开；
+              macOS 15+ 到 系统设置 → 隐私与安全性 → 「仍要打开」，详见 README）
             - CLI（scan / audit / add 网关 / report）不在包内：以源码运行（零依赖），见 README 快速开始
 
             变更日志见本 tag 与 main 的对比。

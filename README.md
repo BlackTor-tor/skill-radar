@@ -179,8 +179,16 @@ watching = second-level discovery + alerting; `--watch` polling = deep sweep
 for non-graphical environments. The tray client is GUI-optional — the five
 core .py files stay pure stdlib.
 
-macOS note: the bundle is unsigned / not notarized — on first launch,
-right-click the app and choose Open (roadmap: signing & notarization).
+macOS note (unsigned / not notarized — signing is deliberately deferred,
+needs an Apple Developer account): an app you **build locally** opens directly.
+A **downloaded** .dmg/.app carries a quarantine flag, so Gatekeeper blocks the
+first launch — a one-time step per app:
+
+- macOS 13/14: right-click the app → **Open** → Open.
+- macOS 15 (Sequoia) and later: the right-click bypass was removed. Launch it
+  once (it will be blocked), then open **System Settings → Privacy & Security**
+  and click **Open Anyway**; or strip the flag in Terminal:
+  `xattr -dr com.apple.quarantine /Applications/SkillRadarTray.app`
 
 ## Security Guard details
 
@@ -355,8 +363,14 @@ usage_file）。构建方式：
 `--watch` 轮询 = 无图形环境下的深度巡检。托盘客户端的 GUI 是可选层——
 五个核心 .py 文件保持纯标准库。
 
-macOS 说明：产物未签名/未公证——首次启动请右键应用选「打开」
-（roadmap：签名与公证）。
+macOS 说明（未签名/未公证——签名需要 Apple 开发者账号，当前刻意不做）：
+**本机构建**的产物双击直接运行；**下载**的 .dmg/.app 带隔离标记（quarantine），
+首次启动会被 Gatekeeper 拦截——每个应用只需放行一次：
+
+- macOS 13/14：右键应用 → 「打开」→ 再点「打开」；
+- macOS 15 (Sequoia) 起：右键绕过已被移除——先双击一次（会被拦），然后到
+  系统设置 → 隐私与安全性 → 点底部「仍要打开」；或终端去掉隔离标记：
+  `xattr -dr com.apple.quarantine /Applications/SkillRadarTray.app`
 
 ### 安全闸门细节
 
