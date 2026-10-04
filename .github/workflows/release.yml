@@ -1,15 +1,22 @@
-# 版本发布：push tag（如 v2.2.0）触发 → 双平台构建 → 自动创建 GitHub Release
-# 并挂上 SkillRadarTray.exe（Windows）与 SkillRadarTray.app/.dmg（macOS）。
-# 手动触发（workflow_dispatch）只构建、不发布（release 步骤带 [skip-release] 守卫）。
+# 版本发布（两条路径，产物都进 GitHub Releases）：
+# 1) push tag（如 v2.2.0）→ 双平台构建 → 发布；
+# 2) 手动 Run workflow 填 version（如 v2.2.0 / 2.2.0 均可）→ 流水线在当前 main
+#    HEAD 上自动建 tag → 构建 → 发布（tag 由 publish 步骤创建，无需本地打 tag）。
+# 手动触发且 version 留空 = 只构建、不发布。
 name: release
 
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号（v2.2.0 或 2.2.0；留空=只构建不发布）'
+        required: false
+        default: ''
 
 permissions:
-  contents: write   # 创建 Release 所需（显式声明，最小权限）
+  contents: write   # 建 tag 与创建 Release 所需（显式声明，最小权限）
 
 jobs:
   windows:
@@ -51,10 +58,18 @@ jobs:
           retention-days: 14
 
   publish:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.version != '')
     needs: [windows, macos]
     runs-on: ubuntu-latest
     steps:
+      - name: Resolve version
+        id: ver
+        run: |
+          V="${{ github.event_name == 'push' && github.ref_name || inputs.version }}"
+          case "$V" in v*) ;; *) V="v$V";; esac   # 归一为 v 前缀
+          echo "version=$V" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
         with: { path: artifacts }
       - name: Prepare release files
@@ -67,12 +82,15 @@ jobs:
           ls -la "${{ github.workspace }}/release"
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.ver.outputs.version }}   # tag 不存在时自动在当前 SHA 上创建
+          target_commitish: ${{ github.sha }}
+          name: skill-radar ${{ steps.ver.outputs.version }}
           files: |
             release/SkillRadarTray.exe
             release/SkillRadarTray.dmg
             release/SkillRadarTray-macos.zip
           body: |
-            skill-radar ${{ github.ref_name }}
+            skill-radar ${{ steps.ver.outputs.version }}
 
             - **SkillRadarTray.exe** — Windows 托盘守护（onefile，双击即用）
             - **SkillRadarTray.dmg / SkillRadarTray-macos.zip** — macOS 托盘守护
@@ -80,4 +98,4 @@ jobs:
               macOS 15+ 到 系统设置 → 隐私与安全性 → 「仍要打开」，详见 README）
             - CLI（scan / audit / add 网关 / report）不在包内：以源码运行（零依赖），见 README 快速开始
 
-            变更日志见本 tag 与 main 的对比。
+            变更日志见本 tag 与上一 tag 的对比。
