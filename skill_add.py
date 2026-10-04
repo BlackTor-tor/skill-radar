@@ -122,7 +122,7 @@ def cmd_add(argv):
     rest, block = split_gateway_flags(argv)
     rest = strip_passthrough_prefix(rest)
     token, url, repo = extract_target(rest)
-    if not rest:
+    if token is None:
         print("usage: skill_guard.py add [--block] -- <npx skills add 参数...>",
               file=sys.stderr)
         return 2

@@ -29,6 +29,7 @@ import subprocess
 import sys
 import tempfile
 from datetime import datetime
+from pathlib import Path
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -99,10 +100,11 @@ def html_to_png(html_text, out_png, width=PAGE_W, height=2200, browser=None):
     browser = browser or find_browser()
     if not browser:
         return False
-    html_path = out_png[:-4] + ".html"
+    out_png = os.path.abspath(out_png)
+    html_path = os.path.splitext(out_png)[0] + ".html"
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html_text)
-    url = "file:///" + html_path.replace("\\", "/").lstrip("/")
+    url = Path(html_path).as_uri()
     for headless in ("--headless=new", "--headless"):
         try:
             subprocess.run(
@@ -212,10 +214,10 @@ def render_usage_html(data, top=25):
     body += ('<h2>ALL SKILLS · 全部技能明细</h2><table><tr><th>skill 技能</th><th>zcode</th>'
              '<th>claude</th><th>sessions 会话</th><th>atime</th><th>total 合计</th>'
              '<th>last used 最近使用</th></tr>')
-    for t, n, s in rows[:top * 2] if top < 40 else rows:
+    for t, n, s in rows:
         last = (s.get("last_tool_use") or "")[:10] or "—"
         body += (f"<tr><td>{html.escape(n)}</td><td>{s['zcode']}</td><td>{s['claude']}</td>"
-                 f"<td>{s['marker']}</td><td>{s.get('atime', 0)}</td><td><b>{t}</b></td><td>{last}</td></tr>")
+                 f"<td>{s['marker']}</td><td>{s.get('atime', 0)}</td><td><b>{t}</b></td><td>{html.escape(last)}</td></tr>")
     body += "</table>"
     return _page("Usage Radar — 技能用量统计报告", meta, body)
 
@@ -228,7 +230,6 @@ def _guard_collect(cfg, rules_text, blocklist_text, max_depth=5):
     import hashlib
     out = []
     seen = {}
-    seen_names = {}
     rules = sg.parse_rules(rules_text)
     for r in cfg.get("roots", []):
         root = r.get("path", "")
@@ -240,71 +241,83 @@ def _guard_collect(cfg, rules_text, blocklist_text, max_depth=5):
         # 显示 rescanned，install_verdict 失去漂移输入。isdir 先判原始值（normpath
         # ("") 得 "."，归一后判会把缺失 path 的坏条目变成扫描 cwd）。
         root = os.path.normpath(root)
-        trusted_root = sg._is_trusted(cfg, root)
-        for entry in sorted(os.listdir(root)):
-            skill = os.path.join(root, entry)
-            if not sg._is_skill_dir(skill):
-                continue
-            real = os.path.realpath(skill).lower()
+        for skill in sg.iter_skill_dirs([root]):
+            entry = os.path.basename(skill)
+            real = os.path.normcase(os.path.realpath(skill))
             if real in seen:
                 continue
             seen[real] = True
             rep = sg.run_engine(skill, rules, blocklist_text, max_depth=max_depth)
-            rep.findings = sg.apply_trust(rep.findings, trusted_root)
-            rep.score = sg.score_findings(rep.findings)
+            trusted = sg._is_trusted(cfg, root)
             md = os.path.join(skill, "SKILL.md")
             if os.path.isfile(md):
                 try:
-                    h = hashlib.sha256(open(md, "rb").read()).hexdigest()
+                    raw = sg._read_regular_file(md, sg.MAX_HASH_FILE_BYTES)
+                    h = hashlib.sha256(raw).hexdigest() if raw is not None else ""
                     if sg._is_trusted(cfg, skill, skill_hash=h):
-                        rep.findings = sg.apply_trust(rep.findings, True)
-                        rep.score = sg.score_findings(rep.findings)
+                        trusted = True
                 except OSError:
                     pass
+            rep.findings = sg.apply_trust(rep.findings, trusted)
+            rep.score = sg.score_findings(rep.findings)
             rep.skill_name = entry
-            # 同名技能去重：不同 agent 目录常有真实内容副本，报告保留风险分最高的实例
-            prior = seen_names.get(entry)
-            if prior is not None:
-                _, _, prev_rep = out[prior]
-                if rep.score <= prev_rep.score:
-                    continue
-                out[prior] = (entry, skill, rep)
-                continue
-            seen_names[entry] = len(out)
+            # Independent copies can have different drift states; only shared
+            # real paths above are duplicates, not matching directory names.
             out.append((entry, skill, rep))
     return out
 
 
-def render_guard_html(skills_info, snapshots, top=30):
+def render_guard_html(skills_info, snapshots, top=30, detailed=None):
     """skills_info: [(name, path, rep)]（详细模式）或空（fast 模式，用 snapshots）。"""
+    if detailed is None:
+        detailed = bool(skills_info)
+    if not detailed:
+        skills_info = [(s.get("name", os.path.basename(path)), path,
+                        sg.ScanReport(s.get("name", os.path.basename(path)), path,
+                                      [], s.get("score", 0), 0, True))
+                       for path, s in (snapshots.get("skills", {}) or {}).items()]
+    def advice(rep, status):
+        if detailed:
+            return install_verdict(rep, status)
+        if status == "drifted" or rep.score >= 40:
+            return "不推荐", "#dc2626", "快照记录内容漂移或高风险分；重扫可查看发现详情"
+        if rep.score > 0:
+            return "谨慎", "#ca8a04", f"快照风险分 {rep.score}/100；重扫可查看发现详情"
+        return "推荐", "#059669", "快照风险分为 0；发现详情需重扫确认"
     all_findings = [f for _, _, rep in skills_info for f in rep.findings]
     sev_count = {s: sum(1 for f in all_findings if f.severity == s) for s in SEV_ORDER}
     status_count = {}
-    for _, s in (snapshots.get("skills", {}) or {}).items():
+    current_snapshots = ({path: snapshots.get("skills", {}).get(path, {"status": "rescanned"})
+                          for _, path, _ in skills_info} if detailed else
+                         snapshots.get("skills", {}) or {})
+    for _, s in current_snapshots.items():
         status_count[s.get("status", "?")] = status_count.get(s.get("status", "?"), 0) + 1
     if not status_count and skills_info:
         status_count = {"rescanned": len(skills_info)}
     crit_skills = sum(1 for _, _, rep in skills_info
                       if any(f.severity == "CRITICAL" for f in rep.findings))
     meta = [f"generated 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-            f"skills scanned 扫描技能: {len(skills_info) if skills_info else sum(status_count.values())}",
-            "mode 模式: " + ("detailed rescan 详细重扫" if skills_info else "fast 快照模式")]
+            f"skills scanned 扫描技能: {len(skills_info)}",
+            "mode 模式: " + ("detailed rescan 详细重扫" if detailed else "fast 快照模式")]
     body = _cards([(sum(status_count.values()), "skills · 技能"),
-                   (sev_count["CRITICAL"], "critical findings · CRITICAL 发现"),
-                   (sev_count["HIGH"], "high findings · HIGH 发现"),
+                   (sev_count["CRITICAL"] if detailed else "—", "critical findings · CRITICAL 发现"),
+                   (sev_count["HIGH"] if detailed else "—", "high findings · HIGH 发现"),
                    (status_count.get("drifted", 0), "drifted · 已漂移"),
                    (status_count.get("baseline-unreviewed", 0), "baseline-unreviewed · 基线未审查")])
     body += "<h2>FINDINGS BY SEVERITY · 发现按严重度</h2>"
     mx = max(sev_count.values()) if any(sev_count.values()) else 1
-    body += _bars([(s, sev_count[s], mx) for s in SEV_ORDER if sev_count[s]],
-                  "#dc2626") if any(sev_count.values()) else '<p class="muted">（无发现）</p>'
+    if detailed:
+        body += _bars([(s, sev_count[s], mx) for s in SEV_ORDER if sev_count[s]],
+                      "#dc2626") if any(sev_count.values()) else '<p class="muted">（无发现）</p>'
+    else:
+        body += '<p class="muted">快照未保存发现详情；请重扫查看严重度分布。</p>'
     body += "<h2>STATUS DISTRIBUTION · 状态分布</h2>"
     body += _bars([(k, v, max(status_count.values())) for k, v in
                    sorted(status_count.items(), key=lambda x: -x[1])], "#334155")
     verdicts = {}
     for name, path, rep in skills_info:
         st = (snapshots.get("skills", {}).get(path, {}) or {}).get("status", "rescanned")
-        v, _, _ = install_verdict(rep, st)
+        v, _, _ = advice(rep, st)
         verdicts[v] = verdicts.get(v, 0) + 1
     body += "<h2>INSTALL ADVICE · 安装建议汇总</h2><p>"
     body += (_badge(f"推荐安装 {verdicts.get('推荐', 0)}", "#059669") + "  " +
@@ -323,16 +336,17 @@ def render_guard_html(skills_info, snapshots, top=30):
                        SEV_COLOR["HIGH"] if rep.score >= 25 else
                        SEV_COLOR["MEDIUM"] if rep.score >= 10 else "#64748b")
         st = (snapshots.get("skills", {}).get(path, {}) or {}).get("status", "rescanned")
-        v, vcolor, reason = install_verdict(rep, st)
-        top_f = max(rep.findings, key=lambda f: SEV_ORDER.index(f.severity)) if rep.findings else None
+        v, vcolor, reason = advice(rep, st)
+        top_f = min(rep.findings, key=lambda f: SEV_ORDER.index(f.severity)) if rep.findings else None
         snippet = sg._sanitize(f"{top_f.rule_id} {top_f.file}:{top_f.line} {top_f.excerpt}")[:90] if top_f else "—"
+        counts = f"{c['CRITICAL']}/{c['HIGH']}/{c['MEDIUM']}/{c['LOW']}" if detailed else "—"
         body += (f"<tr><td>{html.escape(name)}</td><td>{badge}</td>"
                  f"<td>{_badge(st, STATUS_COLOR.get(st, '#64748b'))}</td>"
-                 f"<td>{c['CRITICAL']}/{c['HIGH']}/{c['MEDIUM']}/{c['LOW']}</td>"
+                 f"<td>{counts}</td>"
                  f"<td>{_badge(v, vcolor)}<br><span class='muted'>{html.escape(sg._sanitize(reason))}</span></td>"
                  f"<td class='muted'>{html.escape(snippet)}</td></tr>")
     body += "</table>"
-    if skills_info:
+    if detailed:
         body += ("<p class='muted' style='margin-top:10px'>full findings detail: re-run with "
                  "--json, or check per-skill scan output. drift evidence: skill_guard.py audit --show-diff &lt;skill&gt;</p>")
     return _page("Security Guard — 技能安全检查报告", meta, body)
@@ -342,7 +356,7 @@ def render_guard_html(skills_info, snapshots, top=30):
 def _est_height(html_text, fallback=2200):
     rows = html_text.count("<tr>")
     bars = html_text.count("bar-row")
-    return min(6000, max(1400, 560 + rows * 30 + bars * 22))
+    return max(1400, 560 + rows * 30 + bars * 22)
 
 
 def main(argv=None):
@@ -389,7 +403,7 @@ def main(argv=None):
                 bl_text = open(bl_path, encoding="utf-8").read() if os.path.isfile(bl_path) else "[]"
                 print(f"[skill-radar] guard 详细模式：重扫全部注册技能（约 1-3 分钟）…")
                 info = _guard_collect(cfg, rules_text, bl_text)
-            html_text = render_guard_html(info, snaps, top=args.top)
+            html_text = render_guard_html(info, snaps, top=args.top, detailed=not args.fast)
             est = _est_height(html_text)
         base = os.path.join(out, f"{t}-report-{stamp}")
         with open(base + ".html", "w", encoding="utf-8") as f:

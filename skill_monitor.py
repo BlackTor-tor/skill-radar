@@ -54,6 +54,8 @@ DATA_FILE = os.path.join(BASE_DIR, "skill_usage.json")
 RECENT_IDS_LIMIT = 50000
 CHUNK = 4 * 1024 * 1024
 SENTINEL = b"skill-marker:"
+# A valid marker name is shorter than 120 Unicode characters (up to 4 bytes each).
+MARKER_LOOKBEHIND = len(SENTINEL) + 120 * 4 + 8
 
 
 def _load(path, default):
@@ -71,6 +73,13 @@ def _save(path, data):
     os.replace(tmp, path)
 
 
+def _checkpoint(state, data):
+    """Commit offsets and counters together; the public counters file is an export."""
+    state["counters"] = data
+    _save(STATE_FILE, state)
+    _save(DATA_FILE, data)
+
+
 def _skill(data, name):
     return data["skills"].setdefault(
         name, {"zcode": 0, "claude": 0, "marker": 0, "atime": 0, "marker_sources": {},
@@ -81,7 +90,8 @@ def _skill(data, name):
 def scan_zcode(state, data):
     """Exact Skill-tool invocations from zcode model-I/O rollout logs."""
     offsets = state.setdefault("offsets", {})
-    seen = set(state.get("recent_ids", []))
+    recent = list(dict.fromkeys(state.get("recent_ids", [])))
+    seen = set(recent)
     new = 0
     for path in glob.glob(os.path.join(ZCODE_ROLLOUT, "*.jsonl")):
         try:
@@ -110,18 +120,31 @@ def scan_zcode(state, data):
                 rec = json.loads(raw.decode("utf-8", errors="ignore"))
             except ValueError:
                 continue
-            session = rec.get("sessionId", "?")
-            ts = (rec.get("completedAt") or "")[:19]
-            for tc in (rec.get("response") or {}).get("toolCalls") or []:
+            if not isinstance(rec, dict):
+                continue
+            response = rec.get("response")
+            if not isinstance(response, dict):
+                continue
+            calls = response.get("toolCalls")
+            if not isinstance(calls, list):
+                continue
+            session = rec.get("sessionId") or path
+            ts = rec.get("completedAt") or ""
+            ts = ts[:19] if isinstance(ts, str) else ""
+            for tc in calls:
                 if not isinstance(tc, dict):
                     continue
-                key = f"z|{session}|{tc.get('id')}"
-                if key in seen:
+                key = f"z|{session}|{tc['id']}" if tc.get("id") else None
+                if key is not None and key in seen:
                     continue
                 name = tc.get("name")
                 inp = tc.get("input") or {}
+                if not isinstance(inp, dict):
+                    continue
                 if name == "Skill":
-                    seen.add(key)
+                    if key is not None:
+                        seen.add(key)
+                        recent.append(key)
                     sname = str(inp.get("skill") or inp.get("args") or "?")
                     s = _skill(data, sname)
                     s["zcode"] += 1
@@ -129,8 +152,10 @@ def scan_zcode(state, data):
                         s["last_tool_use"] = max(s["last_tool_use"], ts)
                     new += 1
                 elif name == "Read" and "SKILL.md" in str(inp.get("file_path", "")):
-                    seen.add(key)
-    state["recent_ids"] = list(seen)[-RECENT_IDS_LIMIT:]
+                    if key is not None:
+                        seen.add(key)
+                        recent.append(key)
+    state["recent_ids"] = recent[-RECENT_IDS_LIMIT:]
     return new
 
 
@@ -138,8 +163,9 @@ def scan_zcode(state, data):
 def scan_claude(state, data):
     """Exact Skill-tool invocations from Claude Code session transcripts."""
     offsets = state.setdefault("offsets", {})
+    file_ids = state.setdefault("claude_ids", {})
     new = 0
-    for path in glob.glob(os.path.join(CLAUDE_PROJECTS, "*", "*.jsonl")):
+    for path in glob.glob(os.path.join(CLAUDE_PROJECTS, "**", "*.jsonl"), recursive=True):
         try:
             size = os.path.getsize(path)
         except OSError:
@@ -159,6 +185,7 @@ def scan_claude(state, data):
         if last == -1:
             continue
         offsets[path] = off + last + 1
+        seen = set(file_ids.get(path, []))
         for raw in buf[: last + 1].split(b"\n"):
             if b'"Skill"' not in raw:
                 continue
@@ -166,29 +193,43 @@ def scan_claude(state, data):
                 rec = json.loads(raw.decode("utf-8", errors="ignore"))
             except ValueError:
                 continue
+            if not isinstance(rec, dict):
+                continue
             msg = rec.get("message") or {}
+            if not isinstance(msg, dict):
+                continue
             content = msg.get("content")
             if not isinstance(content, list):
                 continue
-            ts = (rec.get("timestamp") or "")[:19]
+            ts = rec.get("timestamp") or ""
+            ts = ts[:19] if isinstance(ts, str) else ""
             for c in content:
                 if (isinstance(c, dict) and c.get("type") == "tool_use"
                         and c.get("name") == "Skill"):
-                    sname = str((c.get("input") or {}).get("skill") or "?")
+                    inp = c.get("input") or {}
+                    if not isinstance(inp, dict):
+                        continue
+                    call_id = str(c["id"]) if c.get("id") else None
+                    if call_id is not None and call_id in seen:
+                        continue
+                    if call_id is not None:
+                        seen.add(call_id)
+                    sname = str(inp.get("skill") or "?")
                     s = _skill(data, sname)
                     s["claude"] += 1
                     if ts:
                         s["last_tool_use"] = max(s["last_tool_use"], ts)
                     new += 1
+        file_ids[path] = sorted(seen)
     return new
 
 
 # ------------------------------------------------------- layer 3: marker grep
 MARKER_SOURCES = [
     ("codex", CODEX_SESSIONS, ("**", "*.jsonl")),
-    ("claude", CLAUDE_PROJECTS, ("*", "*.jsonl")),
+    ("claude", CLAUDE_PROJECTS, ("**", "*.jsonl")),
     ("cursor", CURSOR_DIR, ("**", "*.json")),
-    ("zcode", ZCODE_ROLLOUT, ("*", "*.jsonl")),
+    ("zcode", ZCODE_ROLLOUT, ("**", "*.jsonl")),
 ]
 
 
@@ -204,7 +245,8 @@ def _marker_hits(buf):
         if end == -1:  # truncated across chunks; next chunk rescans it
             break
         seg = buf[i + len(SENTINEL): end].decode("utf-8", errors="ignore").strip()
-        if seg and len(seg) < 120:
+        if seg and len(seg) < 120 and not any(
+                ch in "<>" or ord(ch) < 32 or ord(ch) == 127 for ch in seg):
             names.append(seg)
         pos = end + 3
     return names
@@ -236,10 +278,15 @@ def scan_markers(state, data):
             counted = set(file_skills.get(path, []))
             try:
                 with open(path, "rb") as f:
-                    f.seek(off)
-                    tail = f.read(CHUNK)
-                    while tail:
-                        keep = tail[-(len(SENTINEL) + 8):]  # sentinel overlap across chunks
+                    # Re-read a bounded overlap to finish markers split across scans.
+                    f.seek(max(0, off - MARKER_LOOKBEHIND))
+                    carry = b""
+                    while True:
+                        chunk = f.read(CHUNK)
+                        if not chunk:
+                            offsets[path] = f.tell()
+                            break
+                        tail = carry + chunk
                         for name in _marker_hits(tail):
                             if name in counted:
                                 continue
@@ -248,16 +295,10 @@ def scan_markers(state, data):
                             s["marker"] += 1
                             s["marker_sources"][src] = s["marker_sources"].get(src, 0) + 1
                             new += 1
-                        if len(tail) < CHUNK:
-                            offsets[path] = size
-                            break
-                        next_off = off + len(tail) - len(keep)
-                        f.seek(next_off)
-                        off = next_off
-                        tail = keep + f.read(CHUNK)
+                        carry = tail[-MARKER_LOOKBEHIND:]
             except OSError:
                 continue
-            file_skills[path] = sorted(counted)[-50:]
+            file_skills[path] = sorted(counted)
     return new
 
 
@@ -277,9 +318,6 @@ def scan_atime(state, data):
         except OSError:
             continue
         name = entry
-        if name not in data["skills"] and name not in base:
-            base[skill_md] = at  # first sighting: baseline only, no count
-            continue
         prev = base.get(skill_md)
         if prev is None:
             base[skill_md] = at
@@ -338,7 +376,9 @@ def main():
         print("state cleared, full rescan…")
 
     state = _load(STATE_FILE, {})
-    data = _load(DATA_FILE, {})
+    # Recover matching counters if the previous export was interrupted after
+    # committing offsets; using an older DATA_FILE here would lose events.
+    data = state.get("counters") or _load(DATA_FILE, {})
     # v1 -> v2 schema migration (v1 stored flat {name: zcode_count})
     if data and data.get("skills") and isinstance(
             next(iter(data["skills"].values()), None), int):
@@ -356,8 +396,7 @@ def main():
             m = scan_markers(state, data)
             a = scan_atime(state, data)
             data["meta"] = {"last_scan": datetime.now().isoformat(timespec="seconds")}
-            _save(STATE_FILE, state)
-            _save(DATA_FILE, data)
+            _checkpoint(state, data)
             if z or c or m or a:
                 print(f"[{datetime.now():%H:%M:%S}] zcode+{z} claude+{c} sessions+{m} atime+{a}")
             time.sleep(args.watch)
@@ -371,8 +410,7 @@ def main():
         m = scan_markers(state, data)
         a = scan_atime(state, data)
         data["meta"] = {"last_scan": datetime.now().isoformat(timespec="seconds")}
-        _save(STATE_FILE, state)
-        _save(DATA_FILE, data)
+        _checkpoint(state, data)
         print(f"scan done: zcode+{z} claude+{c} sessions+{m} atime+{a}"
               f" ({time.time() - t0:.1f}s)")
     if args.json:

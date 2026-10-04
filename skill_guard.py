@@ -12,13 +12,37 @@ load_yaml 仅支持一个迷你 YAML 子集（规则与配置文件都用它）�
 import base64, codecs, hashlib, json, math, os, re, shutil, stat, subprocess, sys, tempfile
 from dataclasses import dataclass, field
 
+def _yaml_parts(s, separator):
+    """按引号外分隔符切分，保留规则正则中的原样反斜杠。"""
+    parts, start, quote, i = [], 0, None, 0
+    while i < len(s):
+        ch = s[i]
+        if quote:
+            if quote == '"' and ch == "\\" and i + 1 < len(s):
+                i += 2
+                continue
+            if ch == quote:
+                if quote == "'" and i + 1 < len(s) and s[i + 1] == "'":
+                    i += 2
+                    continue
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+        elif ch == separator:
+            parts.append(s[start:i])
+            start = i + 1
+        i += 1
+    parts.append(s[start:])
+    return parts
+
+
 def _scalar(s):
     s = s.strip()
     if s.startswith("[") and s.endswith("]"):
         inner = s[1:-1].strip()
-        return [_scalar(p) for p in inner.split(",")] if inner else []
+        return [_scalar(p) for p in _yaml_parts(inner, ",")] if inner else []
     if len(s) >= 2 and s[0] == s[-1] and s[0] in "\"'":
-        return s[1:-1]
+        return s[1:-1].replace("''", "'") if s[0] == "'" else s[1:-1]
     if s.lower() in ("true", "false"):
         return s.lower() == "true"
     if re.fullmatch(r"-?\d+", s):
@@ -29,7 +53,7 @@ def load_yaml(text):
     """解析受支持的 YAML 子集（见模块 docstring）。"""
     lines = []
     for raw in text.splitlines():
-        stripped = raw.split("#", 1)[0].rstrip() if not raw.lstrip().startswith("#") else ""
+        stripped = _yaml_parts(raw, "#")[0].rstrip()
         if stripped.strip():
             lines.append(stripped)
     if not lines:
@@ -120,21 +144,60 @@ def parse_rules(text_or_path):
         rules.append(r)
     return rules
 
-def collect_text_files(root):
-    """返回 [(relpath, text)]；空字节嗅探排除二进制，>2MB 跳过，排除目录整支剪枝。"""
-    out = []
+def _is_reparse(path):
+    """拒绝符号链接与 Windows 重解析点，避免扫描/清理逃出目标目录。"""
+    try:
+        info = os.lstat(path)
+        return stat.S_ISLNK(info.st_mode) or bool(
+            getattr(info, "st_file_attributes", 0) &
+            getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+    except OSError:
+        return True
+
+
+def _safe_walk(root, excluded=EXCLUDED_DIRS):
+    """遍历真实目录；剪掉排除项、符号链接和 junction，稳定按路径排序。"""
+    root = os.path.normpath(root)
+    if _is_reparse(root) or not os.path.isdir(root):
+        return
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIRS]
-        for name in sorted(filenames):
+        if _is_reparse(dirpath):
+            dirnames[:] = []
+            continue
+        dirnames[:] = sorted(d for d in dirnames if d not in excluded and
+                             not _is_reparse(os.path.join(dirpath, d)))
+        yield dirpath, dirnames, sorted(filenames)
+
+
+def _read_regular_file(path, limit):
+    """只读普通文件且最多 limit+1 字节；拒绝 FIFO、设备和链接替换。"""
+    try:
+        before = os.lstat(path)
+        if _is_reparse(path) or not stat.S_ISREG(before.st_mode) or before.st_size > limit:
+            return None
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        fd = os.open(path, flags)
+        with os.fdopen(fd, "rb") as file:
+            opened = os.fstat(file.fileno())
+            if (not stat.S_ISREG(opened.st_mode) or opened.st_size > limit or
+                    (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino) or
+                    _is_reparse(path)):
+                return None
+            raw = file.read(limit + 1)
+        return raw if len(raw) <= limit else None
+    except OSError:
+        return None
+
+
+def collect_text_files(root):
+    """返回 [(relpath, text)]；只读普通文件，排除二进制、>2MB 与目录链接。"""
+    out = []
+    for dirpath, _dirnames, filenames in _safe_walk(root):
+        for name in filenames:
             p = os.path.join(dirpath, name)
-            try:
-                if os.path.getsize(p) > MAX_FILE_BYTES:
-                    continue
-                with open(p, "rb") as f:
-                    raw = f.read()
-            except OSError:
-                continue
-            if b"\x00" in raw:
+            raw = _read_regular_file(p, MAX_FILE_BYTES)
+            if raw is None or b"\x00" in raw:
                 continue
             out.append((os.path.relpath(p, root), raw.decode("utf-8", errors="replace")))
     return out
@@ -146,20 +209,12 @@ def _file_hashes(root):
     被空字节嗅探跳过的二进制与 >2MB 超限文件也参与哈希（二进制载荷正是
     ClawHavoc 型 IOC 场景）。单文件超过 MAX_HASH_FILE_BYTES 跳过。"""
     out = {}
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIRS]
-        for name in sorted(filenames):
+    for dirpath, _dirnames, filenames in _safe_walk(root):
+        for name in filenames:
             p = os.path.join(dirpath, name)
-            try:
-                if os.path.getsize(p) > MAX_HASH_FILE_BYTES:
-                    continue
-                h = hashlib.sha256()
-                with open(p, "rb") as f:
-                    for chunk in iter(lambda: f.read(65536), b""):
-                        h.update(chunk)
-                out[os.path.relpath(p, root)] = h.hexdigest()
-            except OSError:
-                continue
+            raw = _read_regular_file(p, MAX_HASH_FILE_BYTES)
+            if raw is not None:
+                out[os.path.relpath(p, root)] = hashlib.sha256(raw).hexdigest()
     return out
 
 @dataclass
@@ -285,6 +340,9 @@ def _try_rot13(tok):
 
 def run_l3(files, rules, max_depth=5):
     findings = []
+    expanded_parts = {rel: ["\n".join(text.splitlines())] for rel, text in files}
+    decoded_ranges = {}
+    original_lengths = {rel: len(text.splitlines()) for rel, text in files}
     for rel, text in files:
         for i, line in enumerate(text.splitlines(), 1):
             # token 模式：整行/非 CJK 剩余的熵会被中英混排与 URL 稀释或误报
@@ -307,15 +365,47 @@ def run_l3(files, rules, max_depth=5):
         for depth, decoded in cands:
             if depth > max_depth:
                 continue
-            sub_files = [(f"{rel} (decoded L{depth})", decoded)]
+            decoded_rel = f"{rel} (decoded L{depth})"
+            sub_files = [(decoded_rel, decoded)]
+            # 用原文件身份保留 source/sink 上下文，同文件规则不可跨文件配对。
+            parts = expanded_parts[rel]
+            decoded = "\n".join(decoded.splitlines())
+            start = original_lengths[rel] + 1 if len(parts) == 1 else decoded_ranges[rel][-1][1] + 1
+            decoded_ranges.setdefault(rel, []).append(
+                (start, start + len(decoded.splitlines()) - 1, depth))
+            parts.append(decoded)
             hits = []
             for rule in rules:
                 hits.extend(run_l1(rule, sub_files))
-                hits.extend(run_pairing(rule, sub_files))
             for h in hits:   # 解码后命中：镜像一条固定 rule_id 的 OBFUS finding
                 findings.append(Finding("SR-OBFUS-003", "OBFUS", "HIGH", h.file, h.line,
                     h.excerpt, f"解码内容命中规则 {h.rule_id}: {h.message}", []))
             findings.extend(hits)
+    # 配对规则在解码文本与原文的合集中运行，过滤已被 L2 报过的原文配对。
+    expanded = [(rel, "\n".join(parts))
+                for rel, parts in expanded_parts.items()]
+    for rule in rules:
+        original_hits = {(h.file, h.line, h.rule_id) for h in run_pairing(rule, files)}
+        for h in run_pairing(rule, expanded):
+            if (h.file, h.line, h.rule_id) in original_hits:
+                continue
+            for start, end, depth in decoded_ranges.get(h.file, []):
+                if start <= h.line <= end:
+                    h.line = h.line - start + 1
+                    h.file += f" (decoded L{depth})"
+                    break
+            # 配对消息里的 source 位置也从合并行号映射回解码内容。
+            for rel, ranges in decoded_ranges.items():
+                def remap_source(match):
+                    line = int(match.group(1))
+                    for start, end, depth in ranges:
+                        if start <= line <= end:
+                            return f"{rel} (decoded L{depth}):{line - start + 1}"
+                    return match.group(0)
+                h.message = re.sub(re.escape(rel) + r":(\d+)", remap_source, h.message)
+            findings.append(Finding("SR-OBFUS-003", "OBFUS", "HIGH", h.file, h.line,
+                h.excerpt, f"解码内容命中规则 {h.rule_id}: {h.message}", []))
+            findings.append(h)
     return findings
 
 # ---------------------------------------------------------------- 评分与报告
@@ -436,10 +526,22 @@ def _force_rmtree(path):
     """Windows 上 git 对象文件带只读属性，rmtree(ignore_errors=True) 会静默残留——
     先逐条目按「原 mode | 写位」清出写位再删。必须按位或而非替换成裸 S_IWRITE：
     POSIX 上替换会让目录丢失 r/x 位，os.walk 与 rmtree 随即双双静默失效（整树残留）。"""
-    for dirpath, dirnames, filenames in os.walk(path):
+    # 链接本身可移除，但不得 chmod 链接目标，也不得走进 junction。
+    if _is_reparse(path):
+        try:
+            if os.name == "nt" and os.path.isdir(path):
+                os.rmdir(path)
+            else:
+                os.unlink(path)
+        except OSError:
+            pass
+        return
+    for dirpath, dirnames, filenames in _safe_walk(path, excluded=()):
         for name in dirnames + filenames:
             p = os.path.join(dirpath, name)
             try:
+                if _is_reparse(p):
+                    continue
                 os.chmod(p, os.lstat(p).st_mode | stat.S_IWRITE)
             except OSError:
                 pass
@@ -454,6 +556,8 @@ def run_engine(root, rules, blocklist_text="[]", max_depth=5, repo=""):
     SHA-256（含被跳过的二进制/超限文件，单文件 8MB 哈希上限）。
     repo：git 源扫描时传入的 owner/repo 标识（供 blocklist repo IOC 匹配），本地路径默认 ""。
     """
+    if not os.path.isdir(root) or _is_reparse(root):
+        raise ValueError(f"scan target must be a real directory: {root}")
     files = collect_text_files(root)
     findings = []
     for r in rules:
@@ -463,13 +567,47 @@ def run_engine(root, rules, blocklist_text="[]", max_depth=5, repo=""):
     name = os.path.basename(os.path.normpath(root))
     hashes = _file_hashes(root)
     findings.extend(check_blocklist(blocklist_text, name=name, repo=repo, hashes=hashes))
+    # 克隆目录名是随机值；逐个 SKILL.md 检查声明名与目录名，避免 name IOC 失效。
+    names_seen = {(os.path.normpath("SKILL.md"), name)}
+    for rel, text in files:
+        if os.path.basename(rel) != "SKILL.md":
+            continue
+        directory_name = os.path.basename(os.path.dirname(rel)) or name
+        declared_name = _skill_frontmatter_name(text)
+        for candidate in (directory_name, declared_name):
+            if not candidate or (os.path.normpath(rel), candidate) in names_seen:
+                continue
+            names_seen.add((os.path.normpath(rel), candidate))
+            for hit in check_blocklist(blocklist_text, name=candidate, repo="", hashes={}):
+                hit.file = rel
+                findings.append(hit)
     score = score_findings(findings)
     return ScanReport(name, root, findings, score, len(files),
-                      ok=not any(f.severity == "CRITICAL" for f in findings))
+                       ok=not any(f.severity == "CRITICAL" for f in findings))
+
+
+def _skill_frontmatter_name(text):
+    """从 SKILL.md 的 frontmatter 读取单行 name，保持输入仅为字符串。"""
+    lines = text.lstrip("\ufeff").splitlines()
+    if not lines or lines[0].strip() != "---":
+        return ""
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        match = re.match(r"^name\s*:\s*(.*?)\s*$", line)
+        if match:
+            value = match.group(1)
+            quoted = re.fullmatch(r"(['\"])(.*?)\1(?:\s+#.*)?", value)
+            if quoted:
+                return quoted.group(2)
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                return value[1:-1]
+            return value.split(" #", 1)[0].strip()
+    return ""
 
 def main(argv=None):
     """scan/discover/audit/add 子命令 CLI。scan/audit 统一返回退出码（scan --strict 且有
-    CRITICAL → 1；audit --strict 且 summary 有 DRIFT/NEW 行 → 1），不内部 raise
+    CRITICAL → 1；audit --strict 有新增、未接受漂移或 CRITICAL → 1），不内部 raise
     SystemExit；用户错误路径除外（与 argparse 口径一致）：discover --deep / audit
     --watch 未授权 consent、audit --show-diff/--accept-drift 的技能不在快照中，
     均 raise SystemExit。add 子命令在 argparse 之前整体委托 skill_add.cmd_add
@@ -525,6 +663,8 @@ def main(argv=None):
     p_audit.add_argument("--yes", action="store_true",
                          help="非交互授权（--watch 轮询模式的 watch 授权；首次授权落盘）")
     args = ap.parse_args(argv)
+    if args.cmd == "audit" and args.watch is not None and args.watch <= 0:
+        ap.error("--watch must be a positive number of seconds")
     if args.cmd == "scan":
         tmp = None   # URL 分支克隆出的临时目录；本地路径保持 None，绝不被 rmtree
         repo = ""    # git 源时从 URL 提取 owner/repo 供 blocklist repo IOC 匹配
@@ -537,6 +677,9 @@ def main(argv=None):
             rep = run_engine(target, rules, open(args.blocklist, encoding="utf-8").read(), repo=repo)
             print(render_report(rep) if not args.json else
                   json.dumps(_sanitize_json(rep.__dict__), ensure_ascii=False, indent=1))
+        except ValueError as e:
+            print(f"[skill-radar] {e}", file=sys.stderr)
+            return 2
         finally:
             if tmp is not None:
                 _force_rmtree(tmp)
@@ -550,9 +693,18 @@ def main(argv=None):
             roots = discover_roots(deep=True)
         else:
             roots = discover_roots()   # 有界扫描，不涉 consent
-        registered = {_canon_path(r.get("path", ""))
+        registered = {os.path.normcase(os.path.realpath(r.get("path", "")))
                       for r in cfg.get("roots", []) if r.get("path")}
-        tagged = [(r, _canon_path(r) in registered) for r in roots]
+        def is_registered(path):
+            path = os.path.normcase(os.path.realpath(path))
+            for root in registered:
+                try:
+                    if os.path.commonpath([path, root]) == root:
+                        return True
+                except ValueError:  # 不同盘符
+                    continue
+            return False
+        tagged = [(r, is_registered(r)) for r in roots]
         fresh = [r for r, known in tagged if not known]
         print(f"discover: {len(roots)} 个技能根（deep={args.deep}），其中新根 {len(fresh)} 个")
         for r, known in tagged:
@@ -608,7 +760,7 @@ def load_config():
     if not os.path.isfile(path):
         return _default_config()
     data = load_yaml(open(path, encoding="utf-8").read())
-    cfg = {"consent": {}, "roots": [], "trust": {}}
+    cfg = {}
     if isinstance(data, list):
         for item in data:
             if not isinstance(item, dict):
@@ -616,21 +768,25 @@ def load_config():
             sec = item.get("section")
             body = {k: v for k, v in item.items() if k != "section"}
             if sec == "roots":
-                cfg["roots"].append(body)
-            elif sec in cfg and isinstance(cfg[sec], dict):
-                cfg[sec].update(body)
+                cfg.setdefault("roots", [])
+                if body:
+                    cfg["roots"].append(body)
+            elif sec in ("consent", "trust"):
+                cfg.setdefault(sec, {}).update(body)
             elif sec is None:
                 # 无 section 前缀的单键条目 = save_config 的顶层标量写法；
                 # 已知三节不在此覆盖（仍走上方既有分支）。
-                cfg.update({k: v for k, v in body.items() if k not in cfg})
+                cfg.update(body)
     elif isinstance(data, dict):
         for k, v in data.items():
             if v is not None:
                 cfg[k] = v
     merged = _default_config()
-    # 以真值过滤：文件中缺失/为空的 section 不覆盖对应默认值
-    #（save_config 恒写全三节，故对其产物与「非 None 即覆盖」等价）。
-    merged.update({k: v for k, v in cfg.items() if v})
+    for key, value in cfg.items():
+        if key in ("consent", "trust") and isinstance(value, dict):
+            merged[key].update(value)
+        else:
+            merged[key] = value
     return merged
 
 def save_config(cfg):
@@ -646,7 +802,7 @@ def save_config(cfg):
         if isinstance(v, bool): return "true" if v else "false"
         if isinstance(v, int): return str(v)
         if isinstance(v, list): return "[" + ", ".join(dump(x) for x in v) + "]"
-        return str(v)
+        return "'" + str(v).replace("'", "''") + "'"
     lines = []
     for section, val in cfg.items():
         if isinstance(val, dict):
@@ -654,6 +810,8 @@ def save_config(cfg):
             for k2, v2 in val.items():
                 lines.append(f"  {k2}: {dump(v2)}")
         elif isinstance(val, list):
+            if not val:
+                lines.append(f"- section: {section}")
             for item in val:
                 if not isinstance(item, dict):
                     continue
@@ -664,7 +822,7 @@ def save_config(cfg):
             # 顶层标量（str/int/bool）：无 section 前缀的单键条目（dump 已
             # 支持标量；此前该分支缺失，标量被静默丢弃 → usage_file 无写入路径）
             lines.append(f"- {section}: {dump(val)}")
-    open(_config_path(), "w", encoding="utf-8").write("\n".join(lines) + "\n")
+    _atomic_write(_config_path(), lambda f: f.write("\n".join(lines) + "\n"))
 
 # ---------------------------------------------------------------- 快照存储与漂移比对
 
@@ -677,7 +835,8 @@ def load_snapshots():
     派生模式等义的隔离约定）。"""
     if not os.path.isfile(SNAPSHOTS_NAME):
         return {"version": 1, "skills": {}}
-    return json.load(open(SNAPSHOTS_NAME, encoding="utf-8"))
+    with open(SNAPSHOTS_NAME, encoding="utf-8") as f:
+        return json.load(f)
 
 def save_snapshots(data):
     """将快照结构落盘（load_snapshots 的对称格式；ensure_ascii=False 保非 ASCII 原样）。
@@ -685,9 +844,23 @@ def save_snapshots(data):
     建目录基于 SNAPSHOTS_NAME 的 dirname 而非 GUARD_DIR：SNAPSHOTS_NAME 被
     monkeypatch 到任意路径时（如测试临时文件 s.json），目录创建随之重定向，
     不会触碰真实 ~/.skill-radar。"""
-    os.makedirs(os.path.dirname(SNAPSHOTS_NAME), exist_ok=True)
-    json.dump(data, open(SNAPSHOTS_NAME, "w", encoding="utf-8"),
-              ensure_ascii=False, indent=1)
+    _atomic_write(SNAPSHOTS_NAME, lambda f: json.dump(data, f, ensure_ascii=False, indent=1))
+
+
+def _atomic_write(path, write):
+    """同目录临时文件完整写入后替换，失败时保留原配置/快照。"""
+    parent = os.path.dirname(os.path.abspath(path))
+    os.makedirs(parent, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".skill-radar-", dir=parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            write(f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
 
 def snapshot_dir(root, status, score):
     """对单个技能目录做漂移基线快照：collect_text_files 收集文本，逐文件
@@ -721,7 +894,29 @@ def diff_snapshot(old, new):
 # ---------------------------------------------------------------- discover 有界搜索
 
 def _is_skill_dir(path):
-    return os.path.isfile(os.path.join(path, "SKILL.md"))
+    """技能必须是实际目录且 SKILL.md 为实际普通文件，拒绝重解析点。"""
+    if _is_reparse(path) or not os.path.isdir(path):
+        return False
+    file = os.path.join(path, "SKILL.md")
+    try:
+        return not _is_reparse(file) and stat.S_ISREG(os.lstat(file).st_mode)
+    except OSError:
+        return False
+
+
+def iter_skill_dirs(roots):
+    """注册项可为技能池或单技能；递归容器并对重叠 roots 去重，技能内不下探。"""
+    seen = set()
+    for root in roots:
+        root = os.path.normpath(root)
+        for path, dirs, _files in _safe_walk(root):
+            if not _is_skill_dir(path):
+                continue
+            dirs[:] = []
+            key = os.path.normcase(os.path.abspath(path))
+            if key not in seen:
+                seen.add(key)
+                yield path
 
 def discover_roots(deep=False, max_depth=4):
     """有界搜索技能根：起点 HOME 与当前工作目录，深度按**起点**区分——
@@ -746,9 +941,12 @@ def discover_roots(deep=False, max_depth=4):
     found = set()
     for start in starts:
         start = os.path.normpath(start)
+        if _is_skill_dir(start):
+            found.add(start)
+            continue
         limit = max_depth if os.path.normcase(start) == home_norm else None
         start_depth = start.rstrip(os.sep).count(os.sep)
-        for dirpath, dirnames, _ in os.walk(start):
+        for dirpath, dirnames, _ in _safe_walk(start):
             if limit is not None:
                 depth = dirpath.rstrip(os.sep).count(os.sep) - start_depth
                 if depth >= limit:
@@ -848,10 +1046,10 @@ def audit_roots(roots, rules_text, blocklist_text, snapshots, cfg, max_depth=5):
     状态机（规格 §4）：快照无此技能 → NEW，建基线 status="baseline-unreviewed"；
     哈希有变化（added/removed/changed 任一非空）→ DRIFT，status="drifted"；
     无变化 → 保留原状态 + OK。快照键 = 技能目录路径，值五键齐全；DRIFT 条目
-    额外携带 prev_hashes=被覆写前的旧基线 hashes——否则 --show-diff 在漂移被
+    额外携带 prev_hashes=首次漂移前的基线 hashes，直到用户接受漂移——否则 --show-diff 在漂移被
     audit 确认的瞬间就退化为空 diff（s["hashes"] 已是当前内容），状态行指路的
     inspect 通道随之关闭（规格 §4「人工 inspect 后裁定」闭环缺眼）；NEW/
-    无变化条目不携带该键。哈希口径用
+    无变化条目透传该键以保留累计未审变更。哈希口径用
     snapshot_dir（文本哈希语义，与 run_engine 的字节级 IOC 哈希刻意不同）。
     前序裁定：render_report 的「拒绝安装」文案前提是 ok 与 CRITICAL 绑定——
     audit 侧以 ``rep.ok = rep.ok and new["status"] != "drifted"`` 补全，drifted
@@ -866,19 +1064,22 @@ def audit_roots(roots, rules_text, blocklist_text, snapshots, cfg, max_depth=5):
     rules = parse_rules(rules_text)
     summary = []
     last_findings = {}   # 技能路径 → 本次 audit 的 findings（供 §3 共存计数，调用结束即弃）
+    seen_skills = set()   # 重叠注册 roots 不得重复扫描或生成重复状态行。
     for root in roots:
         if not os.path.isdir(root):
             continue
         root = os.path.normpath(root)   # roots 来源混杂（builtin_roots 存正斜杠、
         # 用户手写反斜杠）：不归一则快照键混用分隔符，同一技能会重复建基线且
         # 断言/查找（--show-diff、--accept-drift 的路径比对）在 Windows 上失配。
-        for entry in sorted(os.listdir(root)):
-            skill = os.path.join(root, entry)
-            if not _is_skill_dir(skill):
+        for skill in iter_skill_dirs([root]):
+            key = os.path.normcase(os.path.abspath(skill))
+            if key in seen_skills:
                 continue
+            seen_skills.add(key)
+            entry = os.path.basename(skill)
             try:   # 信任第三级：SKILL.md 原始字节 SHA-256（与 _file_hashes 同口径）
-                with open(os.path.join(skill, "SKILL.md"), "rb") as f:
-                    skill_hash = hashlib.sha256(f.read()).hexdigest()
+                raw = _read_regular_file(os.path.join(skill, "SKILL.md"), MAX_HASH_FILE_BYTES)
+                skill_hash = hashlib.sha256(raw).hexdigest() if raw is not None else ""
             except OSError:
                 skill_hash = ""
             trusted = _is_trusted(cfg, root, skill_hash)   # owners/repos 为路径级，逐技能重算结果不变
@@ -898,7 +1099,7 @@ def audit_roots(roots, rules_text, blocklist_text, snapshots, cfg, max_depth=5):
                     new["status"] = "drifted"
                     # 留住被覆写的旧基线：--show-diff 据此在 drift 确认后仍能
                     # 回答"自上次基线以来改了什么"（状态行指路的 inspect 通道）
-                    new["prev_hashes"] = old["hashes"]
+                    new["prev_hashes"] = old.get("prev_hashes", old["hashes"])
                     head = (f"DRIFT     {entry}  +{len(d['added'])} -{len(d['removed'])} ~{len(d['changed'])}"
                             f"（用 --show-diff {entry} 查看）")
                 else:
@@ -953,11 +1154,16 @@ def _find_skill_entry(snaps, needle):
     """在快照中按名称或路径找技能条目，返回 (存储键, 条目)。
 
     路径比对双侧 os.path.normpath 归一（快照键为 os.path.join 裸形态，跨平台
-    分隔符差异由 normpath 吸收；名称比对优先）。未命中属用户错误路径，
+    分隔符差异归一；完整路径优先，重名要求完整路径）。未命中属用户错误路径，
     raise SystemExit（与 argparse / discover consent 门口径一致）。"""
     for path, s in snaps["skills"].items():
-        if s["name"] == needle or os.path.normpath(path) == os.path.normpath(needle):
+        if _canon_path(path) == _canon_path(needle):
             return path, s
+    matches = [(path, s) for path, s in snaps["skills"].items() if s["name"] == needle]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise SystemExit(f"ambiguous skill name; use a full path: {needle}")
     raise SystemExit(f"skill not in snapshots: {needle}")
 
 def _watch_once(args, cfg, rules_text, bl_text, snaps):
@@ -993,7 +1199,7 @@ def cmd_audit(args):
       CRITICAL 命中行（[HH:MM:SS] 前缀，最多 5 条）；Ctrl+C 退出（KeyboardInterrupt
       不捕获、不被 gate 的 (EOFError, OSError, ValueError) 异常网吞掉，原样穿透）；
     - 默认：audit_roots 全量审计 + save_snapshots + 打印 summary；--strict 且
-      summary 有 DRIFT/NEW 行 → 1。"""
+      有新增、未接受漂移或 CRITICAL → 1。"""
     cfg = load_config()
     rules_text = open(args.rules, encoding="utf-8").read() if args.rules else ""
     bl_text = open(args.blocklist, encoding="utf-8").read()
@@ -1032,7 +1238,9 @@ def cmd_audit(args):
     save_snapshots(snaps)
     print("\n".join(summary) if not args.json else
           json.dumps(summary, ensure_ascii=False, indent=1))
-    if args.strict and any(l.startswith(("DRIFT", "NEW")) for l in summary):
+    if args.strict and any(ln.startswith(("DRIFT", "NEW", "  CRITICAL")) or
+                           "verdict: FAIL" in ln
+                           for block in summary for ln in block.splitlines()):
         return 1
     return 0
 

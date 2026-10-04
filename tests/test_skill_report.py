@@ -133,3 +133,148 @@ def test_guard_collect_normpath_lookup_hits_drifted_key(tmp_path):
     # （失配时 st 回落 "rescanned"，verdict 按无 CRITICAL/无 HIGH 的干净报告走「推荐」）
     assert "drifted" in html and "rescanned" not in html
     assert "不推荐" in html
+
+
+def test_guard_top_finding_uses_highest_severity():
+    from skill_guard import Finding, ScanReport
+    rep = ScanReport("demo", "/demo", [
+        Finding("CRIT-MAIN", "EXEC", "CRITICAL", "a", 1, "critical", "", []),
+        Finding("LOW-OTHER", "EXEC", "LOW", "a", 2, "low", "", [])], 43, 1, False)
+    html = sr.render_guard_html([("demo", "/demo", rep)], {"skills": {}})
+    assert "CRIT-MAIN" in html
+    assert "LOW-OTHER" not in html
+
+
+def test_guard_fast_report_has_snapshot_risk_rows():
+    snaps = {"skills": {
+        "/demo": {"name": "unique-demo", "status": "drifted", "score": 43},
+        "/low": {"name": "unique-low", "status": "scanned", "score": 3}}}
+    html = sr.render_guard_html([], snaps)
+    assert "unique-demo" in html and "unique-low" in html
+    assert ">43<" in html and ">3<" in html
+    assert "不推荐" in html
+    # Missing persisted finding details must not be presented as zero findings.
+    assert ">0/0/0/0<" not in html
+
+
+def test_usage_all_skills_table_is_complete():
+    counters = {"skills": {"skill%02d" % i: dict(COUNTERS["skills"]["alpha"]) for i in range(60)}}
+    html = sr.render_usage_html(counters, top=5)
+    assert html.count("<tr>") == 61
+
+
+def test_usage_timestamp_is_html_escaped():
+    counters = {"skills": {"demo": dict(COUNTERS["skills"]["alpha"], last_tool_use="<svg/onlo")}}
+    html = sr.render_usage_html(counters)
+    assert "<svg/onlo" not in html
+    assert "&lt;svg/onlo" in html
+
+
+def test_png_uses_absolute_escaped_file_uri(tmp_path, monkeypatch):
+    from pathlib import Path
+    monkeypatch.chdir(tmp_path)
+    target = Path("reports # percent%") / "demo.png"
+    target.parent.mkdir()
+    calls = []
+    def screenshot(argv, **kwargs):
+        calls.append(argv)
+        Path(next(arg.split("=", 1)[1] for arg in argv if arg.startswith("--screenshot="))).write_bytes(b"x" * 1200)
+    monkeypatch.setattr(sr.subprocess, "run", screenshot)
+    assert sr.html_to_png("<html></html>", str(target), browser="fake-browser")
+    assert calls[0][-1] == target.with_suffix(".html").resolve().as_uri()
+    assert "--screenshot=" + str(target.resolve()) in calls[0]
+
+
+def test_guard_fast_score_without_findings_does_not_claim_clean():
+    snaps = {"skills": {"/demo": {"name": "high-snapshot", "status": "scanned", "score": 25}}}
+    html = sr.render_guard_html([], snaps)
+    assert "谨慎评估 1" in html
+    assert "未发现任何风险模式" not in html
+    assert "（无发现）" not in html
+
+
+def test_guard_collect_preserves_case_sensitive_realpaths(tmp_path, monkeypatch):
+    from skill_guard import ScanReport
+    pool = tmp_path / "pool"
+    for name in ("first", "second"):
+        skill = pool / name
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("# demo", encoding="utf-8")
+    monkeypatch.setattr(sr.os.path, "realpath", lambda p: "/tmp/Skill" if str(p).endswith("first") else "/tmp/skill")
+    monkeypatch.setattr(sr.os.path, "normcase", lambda p: p)
+    monkeypatch.setattr(sr.sg, "run_engine", lambda path, *a, **kw: ScanReport("demo", path, [], 0, 1, True))
+    info = sr._guard_collect({"roots": [{"path": str(pool)}]}, "", "")
+    assert len(info) == 2
+
+
+def test_guard_collect_trust_downgrades_only_once(tmp_path, monkeypatch):
+    from skill_guard import Finding, ScanReport
+    skill = tmp_path / "trusted-pool" / "demo"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("# demo", encoding="utf-8")
+    monkeypatch.setattr(sr.sg, "run_engine", lambda path, *a, **kw: ScanReport(
+        "demo", path, [Finding("RISK", "EXEC", "HIGH", "SKILL.md", 1, "", "", [])], 25, 1, True))
+    cfg = {"roots": [{"path": str(skill.parent)}], "trust": {"owners": ["trusted-pool"]}}
+    info = sr._guard_collect(cfg, "", "")
+    assert info[0][2].findings[0].severity == "MEDIUM"
+    assert info[0][2].score == sr.sg.score_findings(info[0][2].findings)
+
+
+def test_guard_collect_matches_nested_and_direct_audit_roots(tmp_path):
+    pool = tmp_path / "pool"
+    direct = tmp_path / "direct"
+    nested = pool / ".system" / "nested"
+    for skill in (direct, nested):
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("# demo", encoding="utf-8")
+    cfg = {"roots": [{"path": str(pool)}, {"path": str(direct)}, {"path": str(nested)}]}
+    info = sr._guard_collect(cfg, "", "")
+    assert {name for name, _, _ in info} == {"direct", "nested"}
+    assert len(info) == 2
+
+
+def test_png_height_does_not_clip_large_complete_tables():
+    report = "<table>" + "<tr><td>skill</td></tr>" * 300 + "</table>"
+    assert sr._est_height(report) >= 560 + 300 * 30
+
+
+def test_guard_preserves_same_name_copies_with_different_drift_states(tmp_path):
+    first = tmp_path / "one" / "demo"
+    second = tmp_path / "two" / "demo"
+    for skill in (first, second):
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("# clean", encoding="utf-8")
+    info = sr._guard_collect({"roots": [{"path": str(first.parent)}, {"path": str(second.parent)}]}, "", "")
+    snapshots = {"skills": {
+        str(first): {"name": "demo", "status": "scanned", "score": 0},
+        str(second): {"name": "demo", "status": "drifted", "score": 0}}}
+    html = sr.render_guard_html(info, snapshots)
+    assert len(info) == 2
+    assert "不推荐 1" in html
+
+
+def test_guard_collect_oversized_skill_md_does_not_gain_hash_trust(tmp_path, monkeypatch):
+    import hashlib
+    from skill_guard import Finding, ScanReport
+    skill = tmp_path / "pool" / "demo"
+    skill.mkdir(parents=True)
+    raw = b"# demo" * 20
+    (skill / "SKILL.md").write_bytes(raw)
+    monkeypatch.setattr(sr.sg, "MAX_HASH_FILE_BYTES", 8)
+    monkeypatch.setattr(sr.sg, "run_engine", lambda path, *a, **kw: ScanReport(
+        "demo", path, [Finding("RISK", "EXEC", "HIGH", "SKILL.md", 1, "", "", [])], 25, 1, True))
+    cfg = {"roots": [{"path": str(skill.parent)}], "trust": {"hashes": [hashlib.sha256(raw).hexdigest()]}}
+    info = sr._guard_collect(cfg, "", "")
+    assert info[0][2].findings[0].severity == "HIGH"
+
+
+def test_guard_cli_detailed_empty_roots_does_not_show_stale_snapshots(tmp_path, monkeypatch):
+    monkeypatch.setattr(sr.sg, "load_config", lambda: {"roots": []})
+    monkeypatch.setattr(sr.sg, "load_snapshots", lambda: {"skills": {
+        "/gone": {"name": "stale-removed-skill", "score": 40, "status": "drifted"}}})
+    out = tmp_path / "reports"
+    assert sr.main(["guard", "--html-only", "--out", str(out)]) == 0
+    html = next(out.glob("guard-report-*.html")).read_text(encoding="utf-8")
+    assert "detailed rescan" in html
+    assert "skills scanned 扫描技能: 0" in html
+    assert "stale-removed-skill" not in html
