@@ -89,7 +89,7 @@ window.pywebview = { api: {
 const results = [];
 try {
   browser = spawn(browserPath, [
-    '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
+    '--headless=new', '--no-first-run', '--no-default-browser-check',
     '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank',
   ], { windowsHide: true, stdio: 'ignore' });
   browser.on('error', err => { results.push({ name: 'browser_start', ok: false, error: err.message }); });
@@ -289,7 +289,6 @@ try {
         const spacer = document.createElement('div');
         spacer.style.height = '1600px'; section.append(spacer);
       })()`);
-      await open();
       const scroll = async () => {
         // mouseWheel dispatch waits on a visual-state/renderer acknowledgement
         // that can stall in macOS headless Chromium. The gesture API drives
@@ -299,6 +298,11 @@ try {
           gestureSourceType:'mouse', preventFling:true,
         });
       };
+      await scroll();
+      await pause(180);
+      const preflight = await evaluate(`document.getElementById('main-content').scrollTop`);
+      await evaluate(`window.__scroll_preflight = ${preflight}; document.getElementById('main-content').scrollTop = 0;`);
+      await open();
       const before = await evaluate(`document.getElementById('main-content').scrollTop`);
       await scroll();
       assert.equal(await evaluate(`document.getElementById('main-content').scrollTop`), before,
@@ -316,7 +320,7 @@ try {
             height:main.clientHeight,scrollHeight:main.scrollHeight,rect:r.toJSON(),
             overflow:getComputedStyle(main).overflowY},target:document.elementFromPoint(300,400)?.outerHTML.slice(0,200),
             drawerHidden:document.getElementById('drawer').hidden,
-            inert:document.getElementById('app-layout').inert,wheels:window.__scroll_events};
+            inert:document.getElementById('app-layout').inert,preflight:window.__scroll_preflight,wheels:window.__scroll_events};
         })()`);
         throw new Error(error.message+'; scroll diagnostics: '+JSON.stringify({browser:browserInfo,...diagnostic}));
       }
