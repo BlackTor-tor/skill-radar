@@ -75,8 +75,8 @@ jobs:
       - name: Prepare release files
         run: |
           mkdir -p release
-          cp artifacts/SkillRadarTray-windows/SkillRadarTray.exe release/
-          cp artifacts/SkillRadarTray-macos/SkillRadarTray.dmg release/
+          cp artifacts/SkillRadarTray-windows/SkillRadarTray.exe release/SkillRadarTray_windows_x64.exe
+          cp artifacts/SkillRadarTray-macos/SkillRadarTray.dmg release/SkillRadarTray_macos_arm64.dmg
           ls -la "${{ github.workspace }}/release"
       - uses: softprops/action-gh-release@v2
         with:
@@ -84,13 +84,15 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: skill-radar ${{ steps.ver.outputs.version }}
           files: |
-            release/SkillRadarTray.exe
-            release/SkillRadarTray.dmg
+            release/SkillRadarTray_windows_x64.exe
+            release/SkillRadarTray_macos_arm64.dmg
           body: |
             skill-radar ${{ steps.ver.outputs.version }}
 
-            - **SkillRadarTray.exe** — Windows 托盘守护（onefile，双击即用）
-            - **SkillRadarTray.dmg** — macOS 托盘守护（打开后把 .app 拖入 Applications）
+            - **SkillRadarTray_windows_x64.exe** — Windows 托盘守护（onefile，双击即用；x64/AMD64）
+            - **SkillRadarTray_macos_arm64.dmg** — macOS 托盘守护（Apple Silicon M 系列；打开后把 .app 拖入
+              Applications。Intel Mac 不适用——需要 Intel 版请在 Actions 手动跑 release 工作流的时代
+              用 macos-13 Intel runner 另行构建，当前未产出）
               （未签名/未公证：下载后首次启动会被 Gatekeeper 拦截——macOS 13/14 右键 → 打开；
               macOS 15+ 到 系统设置 → 隐私与安全性 → 「仍要打开」，详见 README）
             - CLI（scan / audit / add 网关 / report）不在包内：以源码运行（零依赖），见 README 快速开始
