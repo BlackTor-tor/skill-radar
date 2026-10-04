@@ -1,8 +1,14 @@
 # 版本发布（两条路径，产物都进 GitHub Releases）：
-# 1) push tag（如 v2.2.0）→ 双平台构建 → 发布；
+# 1) push tag（如 v2.2.0）→ 多平台构建 → 发布；
 # 2) 手动 Run workflow 填 version（如 v2.2.0 / 2.2.0 均可）→ 流水线在当前 main
 #    HEAD 上自动建 tag → 构建 → 发布（tag 由 publish 步骤创建，无需本地打 tag）。
 # 手动触发且 version 留空 = 只构建、不发布。
+#
+# macOS 双架构（背景：macos-13 Intel runner 已于 2025-12-04 退役）：
+#   - arm64：macos-14 (M1) 原生构建；
+#   - x64：同 runner 上安装 Rosetta 2 + x64 Python 交叉构建（PyInstaller 按
+#     运行中解释器的架构打包，cibuildwheel 同款模式）。
+#   不用 --target-arch universal2：需要全链路 universal2 依赖，失败率高。
 name: release
 
 on:
@@ -38,11 +44,22 @@ jobs:
           retention-days: 14
 
   macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: arm64, py_arch: arm64 }   # Apple Silicon 原生
+          - { arch: x64,   py_arch: x64 }     # Intel，经 Rosetta 交叉构建
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+      - name: Install Rosetta 2 (x64 cross-build)
+        if: matrix.py_arch == 'x64'
+        run: softwareupdate --install-rosetta --agree-to-license
       - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
+        with:
+          python-version: '3.12'
+          architecture: ${{ matrix.py_arch }}
       - run: |
           python -m pip install --upgrade pip
           pip install -r requirements-gui.txt
@@ -51,7 +68,7 @@ jobs:
       - run: python build_tray.py
       - uses: actions/upload-artifact@v4
         with:
-          name: SkillRadarTray-macos
+          name: SkillRadarTray-macos-${{ matrix.arch }}
           path: |
             dist/SkillRadarTray.app
             dist/SkillRadarTray.dmg
@@ -76,7 +93,8 @@ jobs:
         run: |
           mkdir -p release
           cp artifacts/SkillRadarTray-windows/SkillRadarTray.exe release/SkillRadarTray_windows_x64.exe
-          cp artifacts/SkillRadarTray-macos/SkillRadarTray.dmg release/SkillRadarTray_macos_arm64.dmg
+          cp artifacts/SkillRadarTray-macos-arm64/SkillRadarTray.dmg release/SkillRadarTray_macos_arm64.dmg
+          cp artifacts/SkillRadarTray-macos-x64/SkillRadarTray.dmg release/SkillRadarTray_macos_x64.dmg
           ls -la "${{ github.workspace }}/release"
       - uses: softprops/action-gh-release@v2
         with:
@@ -86,15 +104,16 @@ jobs:
           files: |
             release/SkillRadarTray_windows_x64.exe
             release/SkillRadarTray_macos_arm64.dmg
+            release/SkillRadarTray_macos_x64.dmg
           body: |
             skill-radar ${{ steps.ver.outputs.version }}
 
             - **SkillRadarTray_windows_x64.exe** — Windows 托盘守护（onefile，双击即用；x64/AMD64）
-            - **SkillRadarTray_macos_arm64.dmg** — macOS 托盘守护（Apple Silicon M 系列；打开后把 .app 拖入
-              Applications。Intel Mac 不适用——需要 Intel 版请在 Actions 手动跑 release 工作流的时代
-              用 macos-13 Intel runner 另行构建，当前未产出）
-              （未签名/未公证：下载后首次启动会被 Gatekeeper 拦截——macOS 13/14 右键 → 打开；
-              macOS 15+ 到 系统设置 → 隐私与安全性 → 「仍要打开」，详见 README）
+            - **SkillRadarTray_macos_arm64.dmg** — macOS（Apple Silicon M1–Mx 原生）
+            - **SkillRadarTray_macos_x64.dmg** — macOS（Intel 芯片）
+              打开 dmg 后把 .app 拖入 Applications。未签名/未公证：下载后首次启动会被
+              Gatekeeper 拦截——macOS 13/14 右键 → 打开；macOS 15+ 到 系统设置 →
+              隐私与安全性 → 「仍要打开」，详见 README。
             - CLI（scan / audit / add 网关 / report）不在包内：以源码运行（零依赖），见 README 快速开始
 
             变更日志见本 tag 与上一 tag 的对比。
