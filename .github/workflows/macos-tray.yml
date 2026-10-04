@@ -1,7 +1,7 @@
 # macOS 构建与测试（GitHub 托管 runner = Apple 硬件，公共仓库免费分钟数）
 # 产出 dist/SkillRadarTray.app 与 dist/SkillRadarTray.dmg（artifact 下载）；
 # 并跑全量测试套件（Windows 专属用例自动 skip）。
-# 真机 GUI 验收清单见 docs/plans/2026-10-03-v2.2-tray-acceptance-mac.md（runner 无交互桌面）。
+# 真机 GUI 验收（托盘/四屏交互）无法在 runner 上进行，需维护者本地执行。
 name: macos-tray
 
 on:

@@ -210,9 +210,11 @@ overridable per rule.
 - **LLM review skills** give semantic depth but are non-deterministic; skill-radar is a reproducible, offline first-pass filter.
 - **Behavioral sandboxes** give runtime ground truth at high cost; skill-radar is the cheap deterministic gate to run before and after install.
 
-Threat model, known limits (SkillCloak-class semantic evasion is out of scope),
-and consent gates for `discover --deep` / `audit --watch`:
-[docs/threat-model.md](docs/threat-model.md).
+Consent gates: the two large-read-footprint actions — `discover --deep`
+(full-disk sweep) and `audit --watch` (continuous re-audit loop) — require
+explicit interactive confirmation on first use (or `--yes` in scripts), and the
+grant is persisted to config. Known limits: SkillCloak-class semantic evasion
+is out of scope for the static engine.
 
 ## Notes & caveats
 
@@ -385,8 +387,9 @@ macOS 说明（未签名/未公证——签名需要 Apple 开发者账号，当
 **定位——互补不替代**：Snyk 内嵌扫描管依赖生态，skill-radar 管 SKILL.md 目录
 约定；LLM 审查 skill 语义深但不可复现，skill-radar 是可复现的离线第一道筛；
 行为沙箱是运行时真值但重装备，skill-radar 是安装前后随手可跑的廉价闸门。
-威胁模型、已知局限（SkillCloak 级语义规避不在 v2 范围）与授权门见
-[docs/threat-model.md](docs/threat-model.md)。
+授权门：两个大读取面动作——`discover --deep`（全盘扫描）与
+`audit --watch`（持续轮询巡检）——首次使用需交互确认（脚本中传 `--yes`），
+授权后写入配置。已知局限：SkillCloak 级语义规避不在静态引擎范围内。
 
 ### 注意
 

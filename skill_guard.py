@@ -780,10 +780,14 @@ def check_consent(cfg, action):
     """cfg["consent"][action] 真值即已授权；键/节缺失一律视为未授权。"""
     return bool(cfg.get("consent", {}).get(action))
 
+_CONSENT_COST = {"deep_scan": "全盘遍历（可能跨盘），读取面大",
+                 "watch": "持续轮询并反复读取全部注册技能目录"}
+
 def interactive_consent(action):
-    """交互确认：打印成本说明后要求**完整**输入 yes（y/no/空/Enter 均拒绝）。"""
+    """交互确认：打印成本说明后要求**完整**输入 yes（y/no/空/Enter 均拒绝）。
+    成本说明内联（成本按动作给出），不指向仓库内文档——docs/ 不入库。"""
     print(f"[skill-radar] 该动作（{action}）读取面较大，需要明确授权。")
-    print("  了解成本说明见 docs/threat-model.md。输入完整 yes 继续。")
+    print(f"  成本：{_CONSENT_COST.get(action, '大范围读取')}。输入完整 yes 继续。")
     return input("confirm> ").strip() == "yes"
 
 def gate_consent(cfg, action, yes_flag):
