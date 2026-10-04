@@ -66,11 +66,13 @@ jobs:
           pip install pytest
       - run: python -m pytest tests -q
       - run: python build_tray.py
+      - name: Archive app with executable permissions
+        run: ditto -c -k --sequesterRsrc --keepParent dist/SkillRadarTray.app dist/SkillRadarTray-macos.zip
       - uses: actions/upload-artifact@v4
         with:
           name: SkillRadarTray-macos-${{ matrix.arch }}
           path: |
-            dist/SkillRadarTray.app
+            dist/SkillRadarTray-macos.zip
             dist/SkillRadarTray.dmg
           retention-days: 14
 

@@ -32,6 +32,9 @@ jobs:
       - name: Build .app + dmg
         run: python build_tray.py
 
+      - name: Archive app with executable permissions
+        run: ditto -c -k --sequesterRsrc --keepParent dist/SkillRadarTray.app dist/SkillRadarTray-macos.zip
+
       - name: Smoke — frozen imports & resources
         run: |
           python - <<'EOF'
@@ -52,6 +55,6 @@ jobs:
         with:
           name: SkillRadarTray-macos
           path: |
-            dist/SkillRadarTray.app
+            dist/SkillRadarTray-macos.zip
             dist/SkillRadarTray.dmg
           retention-days: 14
