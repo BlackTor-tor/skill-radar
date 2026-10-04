@@ -290,6 +290,9 @@ try {
         spacer.style.height = '1600px'; section.append(spacer);
       })()`);
       const scroll = async () => {
+        // A captured frame commits the current scroll tree before synthetic
+        // input, including headless macOS where no visible window draws it.
+        await cdp('Page.captureScreenshot', {format:'png',captureBeyondViewport:false});
         // mouseWheel dispatch waits on a visual-state/renderer acknowledgement
         // that can stall in macOS headless Chromium. The gesture API drives
         // real mouse input through Chromium's synthetic gesture queue instead.
