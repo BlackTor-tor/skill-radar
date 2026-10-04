@@ -285,19 +285,23 @@ try {
         spacer.style.height = '1600px'; section.append(spacer);
       })()`);
       await open();
-      const wheel = async () => {
-        await cdp('Input.dispatchMouseEvent', {
-          type:'mouseWheel', x:300, y:400, deltaX:0, deltaY:220,
+      const scroll = async () => {
+        // mouseWheel dispatch waits on a visual-state/renderer acknowledgement
+        // that can stall in macOS headless Chromium. The gesture API drives
+        // real mouse input through Chromium's synthetic gesture queue instead.
+        await cdp('Input.synthesizeScrollGesture', {
+          x:300, y:400, yDistance:-220,
+          gestureSourceType:'mouse', preventFling:true,
         });
-        await pause(180);
       };
       const before = await evaluate(`document.getElementById('main-content').scrollTop`);
-      await wheel();
+      await scroll();
       assert.equal(await evaluate(`document.getElementById('main-content').scrollTop`), before,
         'Wheeling over the modal backdrop must not scroll the background content');
       await key('Escape', 'Escape', 27);
       await pause(180);
-      await wheel();
+      await scroll();
+      await waitFor(`document.getElementById('main-content').scrollTop > ${before}`);
       assert(await evaluate(`document.getElementById('main-content').scrollTop`) > before,
         'Closing the drawer must restore wheel scrolling in the main content');
     });
