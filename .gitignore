@@ -11,3 +11,6 @@ dist/
 build/
 *.spec
 tray_state.json
+
+# 本地文档不入库（规格 / 计划 / 验收记录等过程与内部文档）
+docs/
