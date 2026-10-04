@@ -76,9 +76,7 @@ jobs:
         run: |
           mkdir -p release
           cp artifacts/SkillRadarTray-windows/SkillRadarTray.exe release/
-          cd artifacts/SkillRadarTray-macos
-          zip -qry "${{ github.workspace }}/release/SkillRadarTray-macos.zip" SkillRadarTray.app
-          cp SkillRadarTray.dmg "${{ github.workspace }}/release/"
+          cp artifacts/SkillRadarTray-macos/SkillRadarTray.dmg release/
           ls -la "${{ github.workspace }}/release"
       - uses: softprops/action-gh-release@v2
         with:
@@ -88,12 +86,11 @@ jobs:
           files: |
             release/SkillRadarTray.exe
             release/SkillRadarTray.dmg
-            release/SkillRadarTray-macos.zip
           body: |
             skill-radar ${{ steps.ver.outputs.version }}
 
             - **SkillRadarTray.exe** — Windows 托盘守护（onefile，双击即用）
-            - **SkillRadarTray.dmg / SkillRadarTray-macos.zip** — macOS 托盘守护
+            - **SkillRadarTray.dmg** — macOS 托盘守护（打开后把 .app 拖入 Applications）
               （未签名/未公证：下载后首次启动会被 Gatekeeper 拦截——macOS 13/14 右键 → 打开；
               macOS 15+ 到 系统设置 → 隐私与安全性 → 「仍要打开」，详见 README）
             - CLI（scan / audit / add 网关 / report）不在包内：以源码运行（零依赖），见 README 快速开始
