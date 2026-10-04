@@ -300,9 +300,12 @@ try {
           x:300, y:400, yDistance:-220,
           gestureSourceType:'mouse', preventFling:true,
         });
+        // Commit the resulting frame as well: gesture completion can precede
+        // applying its compositor scroll offset on macOS headless Chromium.
+        await cdp('Page.captureScreenshot', {format:'png',captureBeyondViewport:false});
       };
       await scroll();
-      await pause(180);
+      await waitFor(`document.getElementById('main-content').scrollTop > 0`);
       const preflight = await evaluate(`document.getElementById('main-content').scrollTop`);
       await evaluate(`window.__scroll_preflight = ${preflight}; document.getElementById('main-content').scrollTop = 0;`);
       await open();
