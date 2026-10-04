@@ -1,0 +1,5 @@
+# v2.2 托盘客户端构建期依赖（规格 §1c：不进源码依赖，核心 .py 纯标准库）
+pystray>=0.19
+pillow>=10.0
+pywebview>=5.0
+pyinstaller>=6.0

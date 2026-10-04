@@ -139,6 +139,49 @@ A typical rhythm: `scan` before every install, `audit --strict` on a weekly
 schedule, `--accept-drift` only after you have eyeballed the diff, and
 `skill_report.py` whenever you want the picture in one image.
 
+### Pre-install gateway: `add` (v2.2)
+
+`python skill_guard.py add [--block] <npx skills add args...>` gates every
+install: it shallow-clones the source, runs the full 3-layer engine, prints the
+report plus the three-way install verdict (推荐/谨慎/不推荐), then delegates to
+`npx skills add` with your original arguments (exit code passed through).
+After a successful install it automatically baselines the new skills (audit
+increment). `--block` (persisted to `consent.add_block` in config.yaml on
+first use) refuses 不推荐-verdict installs with exit code 1 — non-interactive
+and fail-closed, same contract as `scan --strict`. Clone/scan failure fails
+open with a loud warning. One-line accelerator:
+
+    # bash
+    alias skills='python /path/to/skill_guard.py add -- skills'
+    # PowerShell
+    function skills { python F:\path\to\skill_guard.py add -- skills @args }
+
+Note: `--block` is claimed by the gateway; pass skills-CLI flags after the
+source (or after `--`).
+
+### SkillRadar Tray (v2.2, Windows + macOS)
+
+The optional tray daemon watches all registered skill roots in real time
+(pure-ctypes ReadDirectoryChangesW on Windows, FSEvents on macOS — no daemon
+framework, no new core dependencies) and reacts to changes in the skill pool:
+new skill or content drift → toast + tray badge; in block mode a CRITICAL
+verdict additionally quarantines the skill directory (opt-in, moved to
+`~/.skill-radar/quarantine/` with a RESTORE.txt note). The bundled UI
+(pywebview, offline single-file HTML) shows Overview / Security / Usage /
+Settings. Build it with:
+
+    pip install -r requirements-gui.txt
+    python build_tray.py          # Windows: dist/SkillRadarTray.exe (onefile)
+                                   # macOS: dist/SkillRadarTray.app + .dmg
+
+Event watching and `audit --watch` are complementary layers (spec §4):
+watching = second-level discovery + alerting; `--watch` polling = deep sweep
+for non-graphical environments. The tray client is GUI-optional — the five
+core .py files stay pure stdlib.
+
+macOS note: the bundle is unsigned / not notarized — on first launch,
+right-click the app and choose Open (roadmap: signing & notarization).
+
 ## Security Guard details
 
 The guard scans **all** text files inside a skill directory (attached scripts
@@ -273,6 +316,47 @@ Edge/Chrome 无头截图导出（不加依赖，中文走系统字体）：
 
 典型节奏：**装前 scan、每周 audit --strict、accept-drift 只在亲眼看 diff 之后、
 想要一图流就跑 skill_report.py**。
+
+### 装前网关：`add`（v2.2）
+
+`python skill_guard.py add [--block] <npx skills add 的参数...>` 把住每一次
+安装：浅克隆安装源 → 跑完整三层引擎 → 打印报告与三分法安装判定
+（推荐/谨慎/不推荐）→ 携原参数转调 `npx skills add`（退出码透传）。
+安装成功后自动为新技能建基线（audit 增量）。`--block`（首次使用即持久化到
+config.yaml 的 `consent.add_block`）对不推荐判定的安装以退出码 1 拒绝——
+非交互、fail-closed，与 `scan --strict` 同一口径。克隆/扫描失败则高声告警、
+fail-open 放行。一行加速器：
+
+    # bash
+    alias skills='python /path/to/skill_guard.py add -- skills'
+    # PowerShell
+    function skills { python F:\path\to\skill_guard.py add -- skills @args }
+
+注意：`--block` 由网关占用——skills CLI 的旗标请写在安装源之后（或 `--` 之后）。
+
+### SkillRadar 托盘（v2.2，Windows + macOS）
+
+可选的托盘守护进程实时监听所有已登记的技能根目录（Windows 用纯 ctypes 的
+ReadDirectoryChangesW，macOS 用 FSEvents——无守护框架、核心零新增依赖），
+并对技能池变化作出反应：新技能或内容漂移 → 气泡通知 + 托盘角标；阻断模式下
+CRITICAL 判定还会隔离技能目录（opt-in，移入
+`~/.skill-radar/quarantine/` 并留 RESTORE.txt 说明）。内置界面（pywebview，
+离线单文件 HTML）提供 总览 / 安全 / 用量 / 设置 四屏；用量屏读取
+`skill_usage.json` 计数器——配置里加 `"usage_file": "<绝对路径>"` 可指向
+自定义计数文件（已知限制：frozen exe 下 skill_monitor 默认落在临时目录，
+请在源码目录先跑一次 `python skill_monitor.py` 生成数据，或直接配置
+usage_file）。构建方式：
+
+    pip install -r requirements-gui.txt
+    python build_tray.py          # Windows: dist/SkillRadarTray.exe（onefile）
+                                   # macOS: dist/SkillRadarTray.app + .dmg
+
+事件监听与 `audit --watch` 是互补的两层（规格 §4）：监听 = 秒级发现 + 告警；
+`--watch` 轮询 = 无图形环境下的深度巡检。托盘客户端的 GUI 是可选层——
+五个核心 .py 文件保持纯标准库。
+
+macOS 说明：产物未签名/未公证——首次启动请右键应用选「打开」
+（roadmap：签名与公证）。
 
 ### 安全闸门细节
 

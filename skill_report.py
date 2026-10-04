@@ -234,6 +234,12 @@ def _guard_collect(cfg, rules_text, blocklist_text, max_depth=5):
         root = r.get("path", "")
         if not os.path.isdir(root):
             continue
+        # I-1：root 归一到 normpath 形态，与 audit_roots 的快照键口径一致——cfg
+        # roots 常存正斜杠原始形态，不归一则 join 出的路径在 Windows 上与 audit
+        # 写入的反斜杠快照键失配，render_guard_html 裸查表落空，已漂移技能降级
+        # 显示 rescanned，install_verdict 失去漂移输入。isdir 先判原始值（normpath
+        # ("") 得 "."，归一后判会把缺失 path 的坏条目变成扫描 cwd）。
+        root = os.path.normpath(root)
         trusted_root = sg._is_trusted(cfg, root)
         for entry in sorted(os.listdir(root)):
             skill = os.path.join(root, entry)

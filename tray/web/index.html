@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SkillRadar Tray</title>
+<style>
+/* 冷调极简 Token（规格 §2 原文，OKLCH） */
+:root {
+  --color-primary: oklch(0.55 0.20 250);
+  --color-surface: oklch(0.99 0.005 240);
+  --color-on-surface: oklch(0.15 0.01 240);
+  --color-error: oklch(0.55 0.20 25);
+  --color-success: oklch(0.65 0.18 145);
+  --color-warning: oklch(0.75 0.15 80);
+  --color-border: oklch(0.90 0.005 240);
+  --color-muted: oklch(0.50 0.02 240);
+  --radius: 6px;
+  --font-stack: 'Segoe UI', -apple-system, 'SF Pro Text', 'PingFang SC',
+                'Microsoft YaHei', sans-serif;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: var(--font-stack); background: var(--color-surface);
+       color: var(--color-on-surface); font-size: 15px; line-height: 1.6; }
+.layout { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
+nav.sidebar { border-right: 1px solid var(--color-border); padding: 20px 12px;
+              display: flex; flex-direction: column; gap: 2px; }
+nav.sidebar button { all: unset; cursor: pointer; padding: 10px 14px;
+  border-radius: var(--radius); min-height: 44px; display: flex;
+  align-items: center; gap: 10px; color: var(--color-on-surface);
+  transition: background-color 150ms ease-out, color 150ms ease-out; }
+nav.sidebar button:hover { background: oklch(0.96 0.005 240); }
+nav.sidebar button.active { background: oklch(0.93 0.01 250); color: var(--color-primary); }
+main { padding: 28px 36px; max-width: 1100px; }
+main section { display: none; }
+main section.active { display: block; }
+h1 { font-size: 22px; margin-bottom: 4px; letter-spacing: -0.01em; }
+h2 { font-size: 16px; margin: 26px 0 10px; color: var(--color-on-surface); }
+p.sub { color: var(--color-muted); margin-bottom: 22px; max-width: 70ch; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 14px; }
+.tile { border: 1px solid var(--color-border); border-radius: var(--radius);
+        padding: 14px 16px; background: var(--color-surface); }
+.tile .num { font-size: 26px; font-weight: 650; }
+.tile .lbl { color: var(--color-muted); font-size: 13px; margin-top: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; font-size: 12px; font-weight: 600; color: var(--color-muted);
+     text-transform: uppercase; letter-spacing: 0.04em;
+     border-bottom: 1px solid var(--color-border); padding: 8px 10px; }
+td { padding: 9px 10px; border-bottom: 1px solid var(--color-border); }
+tbody tr { cursor: pointer; transition: background-color 150ms ease-out; }
+tbody tr:hover { background: oklch(0.97 0.005 240); }
+.badge { display: inline-block; font-size: 12px; font-weight: 600;
+         padding: 1px 8px; border-radius: 999px; }
+.badge.crit { background: var(--color-error); color: white; }
+.badge.warn { background: var(--color-warning); color: oklch(0.2 0.05 80); }
+.badge.ok   { background: var(--color-success); color: oklch(0.18 0.05 145); }
+.bar { background: oklch(0.93 0.005 240); border-radius: 3px; height: 14px; }
+.bar > span { display: block; height: 100%; border-radius: 3px;
+              background: var(--color-primary); }
+.drawer { position: fixed; top: 0; right: -420px; width: 420px; height: 100vh;
+          background: var(--color-surface); border-left: 1px solid var(--color-border);
+          box-shadow: -8px 0 24px oklch(0.15 0.01 240 / 0.08); padding: 24px;
+          overflow-y: auto; transition: transform 200ms ease-out;
+          z-index: 40; }
+.drawer.open { transform: translateX(-420px); }
+.toast { position: fixed; bottom: 20px; left: 50%; transform: translate(-50%, 0);
+         background: var(--color-on-surface); color: var(--color-surface);
+         padding: 10px 18px; border-radius: var(--radius); font-size: 14px;
+         opacity: 0; transition: opacity 200ms ease-out; z-index: 50; }
+.toast.show { opacity: 1; }
+.settings-row { display: flex; justify-content: space-between; align-items: center;
+                padding: 14px 0; border-bottom: 1px solid var(--color-border);
+                max-width: 70ch; }
+/* 任务 6 Minor：开关放大到 48x28（触摸目标≥44px 宽，行高由 .settings-row
+   padding 保证）；knob 22px、translateX(20px) 后左右各余 3px，视觉居中 */
+.switch { width: 48px; height: 28px; border-radius: 999px; background: oklch(0.9 0.005 240);
+          position: relative; cursor: pointer; min-width: 48px;
+          transition: background-color 200ms ease-out; }
+.switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 22px;
+                 height: 22px; border-radius: 50%; background: white;
+                 transition: transform 200ms ease-out; }
+.switch.on { background: var(--color-primary); }
+.switch.on::after { transform: translateX(20px); }
+/* 任务 6 渲染辅助（新增，不动骨架 Token 与结构） */
+.empty { color: var(--color-muted); text-align: center; padding: 18px 10px; }
+.usage-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px;
+             max-width: 70ch; }
+.usage-lbl { flex: none; width: 96px; font-size: 13px; color: var(--color-muted); }
+.usage-num { flex: none; width: 40px; text-align: right; font-size: 13px;
+             font-weight: 600; }
+.diff-pre { white-space: pre-wrap; word-break: break-all; font-size: 12.5px;
+            background: oklch(0.97 0.005 240); border: 1px solid var(--color-border);
+            border-radius: var(--radius); padding: 12px; max-width: 100%;
+            overflow-x: auto; }
+#drawer-body p { max-width: 65ch; margin-bottom: 8px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-property: none !important; animation: none !important; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <h1>SkillRadar</h1>
+    <button data-screen="overview" class="active">📊 Overview 概览</button>
+    <button data-screen="security">🛡️ Security 安全</button>
+    <button data-screen="usage">📈 Usage 用量</button>
+    <button data-screen="settings">⚙️ Settings 设置</button>
+  </nav>
+  <main>
+    <section id="screen-overview" class="active">
+      <h1>Overview 概览</h1>
+      <p class="sub">守护状态与最近事件 · Guard status &amp; recent events</p>
+      <button class="btn" id="ov-resume" hidden style="min-height:44px; margin-bottom:14px">恢复守护 Resume</button>
+      <div class="grid" id="ov-tiles"></div>
+      <h2>Recent events · 最近事件流</h2>
+      <table><thead><tr><th>Time 时间</th><th>Kind 类型</th><th>Event 事件</th></tr></thead>
+      <tbody id="ov-events"></tbody></table>
+    </section>
+    <section id="screen-security">
+      <h1>Security 安全</h1>
+      <p class="sub">技能风险表（点击行展开明细） · Skill risk table (click a row)</p>
+      <div class="grid" id="sec-tiles"></div>
+      <table><thead><tr><th>Skill 技能</th><th>Score 风险分</th><th>Status 状态</th>
+      <th>Advice 安装建议</th></tr></thead><tbody id="sec-rows"></tbody></table>
+    </section>
+    <section id="screen-usage">
+      <h1>Usage 用量</h1>
+      <p class="sub">Top 技能调用 · Top skill usage</p>
+      <div id="usage-bars"></div>
+      <h2>调用明细 · Per-skill detail</h2>
+      <div id="usage-detail"></div>
+    </section>
+    <section id="screen-settings">
+      <h1>Settings 设置</h1>
+      <p class="sub">模式与数据目录 · Modes &amp; data directory</p>
+      <div class="settings-row"><div>拦截模式 Block mode<br>
+        <small style="color:var(--color-muted)">CRITICAL/漂移直接拦截（--block）</small></div>
+        <div class="switch" id="sw-block" role="switch" aria-checked="false" tabindex="0"></div></div>
+      <div class="settings-row"><div>隔离 Quarantine<br>
+        <small style="color:var(--color-muted)">拦截后移动到 ~/.skill-radar/quarantine/</small></div>
+        <div class="switch" id="sw-quarantine" role="switch" aria-checked="false" tabindex="0"></div></div>
+      <div class="settings-row"><div>数据目录 Data directory<br>
+        <small id="data-dir-path" style="color:var(--color-muted)"></small></div>
+        <button class="btn" id="btn-open-data" style="min-height:44px">打开 Open</button></div>
+    </section>
+  </main>
+</div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="false" aria-label="Findings detail 明细">
+  <h2 id="drawer-title"></h2><div id="drawer-body"></div>
+  <div style="margin-top:18px; display:flex; gap:10px">
+    <button class="btn" id="btn-show-diff" style="min-height:44px">Show diff 查看变更</button>
+    <button class="btn" id="btn-accept" style="min-height:44px">Accept drift 接受漂移</button>
+  </div>
+</aside>
+<div class="toast" id="toast"></div>
+<script>
+/* pywebview.api 桥：get_state() 2s 轮询 + act(name, payload) 动作。
+   四屏渲染（ovTiles/ovEvents/secRows←snapshot.skills/usageBars）、
+   Usage 明细（act('get_usage')，切屏时拉取）、Drawer 打开/关闭、
+   开关 set_mode/set_quarantine、show_diff/accept_drift、
+   恢复守护 resume（托盘动态菜单项与 Overview 按钮共用）见下方实现。
+   约束：innerHTML 拼接前对一切动态文本做 escapeHtml()；XSS 面来自被扫技能名。 */
+async function api(){ return window.pywebview.api; }
+function escapeHtml(s){ return String(s ?? '').replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+let CURRENT = null;
+async function tick(){
+  try { CURRENT = await (await api()).get_state(); render(CURRENT); } catch(e){}
+}
+/* ---- 渲染实现（任务 6 唯一自由度：纯 DOM 渲染；结构与 Token 已由静态断言钉住）---- */
+const $ = id => document.getElementById(id);
+const KIND_STYLE = { new:['NEW','ok'], drift:['DRIFT','warn'], block:['BLOCK','crit'],
+                     quarantine:['隔离','crit'], error:['ERROR','crit'], skip:['SKIP','warn'] };
+const GUARD_VIEW = { running:['运行中 Running','var(--color-success)'],
+                     paused:['已暂停 Paused','var(--color-muted)'],
+                     alert:['有告警 Alert','var(--color-warning)'],
+                     quarantine:['已拦截 Quarantined','var(--color-error)'] };
+const ADVICE = { good:'推荐 Recommended', mid:'谨慎 Install with caution',
+                 bad:'不推荐 Not recommended' };
+/* 终审 I-3：建议列由 status/score 推导——drifted/blocked→不推荐、
+   score>=40→不推荐、score>=25→谨慎、否则推荐 */
+function adviceFor(s){
+  const score = Number(s && s.score) || 0;
+  const st = String((s && s.status) || '');
+  if (st === 'drifted' || st === 'blocked' || score >= 40) return ADVICE.bad;
+  if (score >= 25) return ADVICE.mid;
+  return ADVICE.good;
+}
+function kindBadge(k){
+  const v = KIND_STYLE[k] || [k, 'ok'];
+  return '<span class="badge ' + v[1] + '">' + escapeHtml(v[0]) + '</span>';
+}
+function todayCounters(st){
+  const d = Object.values(st.today || {})[0] || {};
+  return { new:d.new || 0, drift:d.drift || 0, block:d.block || 0 };
+}
+function basename(p){
+  const s = String(p).replace(/[\\/]+$/, '');
+  const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
+  return i >= 0 ? s.slice(i + 1) : s;
+}
+/* 从事件文本提取技能名（可开 Drawer 的行才提取）；提取不到返回 null */
+function skillFromEvent(ev){
+  const t = String((ev && ev.text) || '');
+  let m = t.match(/^(?:新技能|内容漂移)\s+(.+)$/);
+  if (m) return m[1].trim();
+  m = t.match(/^CRITICAL 拦截\s+(.+)$/);
+  if (m) return basename(m[1].trim());
+  return null;
+}
+const tile = (lbl, numHtml) =>
+  '<div class="tile"><div class="num">' + numHtml + '</div><div class="lbl">' +
+  escapeHtml(lbl) + '</div></div>';
+const numStr = n => escapeHtml(String(n));
+function evRow(ev){
+  const skill = skillFromEvent(ev);
+  const attrs = skill
+    ? ' class="rowlink" data-skill="' + escapeHtml(skill) + '" data-note="' +
+      escapeHtml(ev.text || '') + '"'
+    : '';
+  return '<tr' + attrs + '><td>' + escapeHtml(ev.ts || '') + '</td><td>' +
+         kindBadge(ev.kind) + '</td><td>' + escapeHtml(ev.text || '') + '</td></tr>';
+}
+/* Security 屏：从 snapshot.skills 渲染（终审 I-3 最小接线——daemon 每轮扫描
+   把 name/score/status 写进 state.skills）。行点击 Drawer 仍走事件备注：
+   按技能名从事件流取最近一条作 data-note。无数据时空态「暂无扫描数据」。 */
+function eventNoteMap(st){
+  const m = {};
+  for (const ev of (st.events || [])) {
+    const s = skillFromEvent(ev);
+    if (s && !(s in m)) m[s] = ev.text || '';
+  }
+  return m;
+}
+function secRow(s, noteMap){
+  return '<tr class="rowlink" data-skill="' + escapeHtml(s.name) +
+         '" data-note="' + escapeHtml(noteMap[s.name] || '') + '"><td>' +
+         escapeHtml(s.name) + '</td><td>' + numStr(s.score) + '</td><td>' +
+         escapeHtml(s.status) + '</td><td>' + escapeHtml(adviceFor(s)) +
+         '</td></tr>';
+}
+function usageHtml(st, c){
+  const items = [['新增 New', c.new], ['漂移 Drift', c.drift], ['拦截 Block', c.block],
+                 ['事件 Events', (st.events || []).length]];
+  const max = Math.max.apply(null, [1].concat(items.map(i => i[1])));
+  const bars = items.map(i =>
+    '<div class="usage-row"><span class="usage-lbl">' + escapeHtml(i[0]) + '</span>' +
+    '<div class="bar" style="flex:1"><span style="width:' +
+    Math.round(i[1] / max * 100) + '%"></span></div>' +
+    '<span class="usage-num">' + numStr(i[1]) + '</span></div>').join('');
+  return '<div class="grid" style="margin-bottom:18px">' +
+         items.map(i => tile(i[0], numStr(i[1]))).join('') + '</div>' + bars;
+}
+/* ---- Usage 明细（终审 I-3）：act('get_usage') 拉取调用级计数（config
+   usage_file 或 skill_monitor.DATA_FILE，按 total 降序前 25），切到 Usage
+   屏时拉取；空数据/桥不可用回退空态（原空态文案保留）。条形复用 .bar。 ---- */
+let USAGE_ROWS = null;
+async function loadUsage(){
+  const r = await act('get_usage', {});
+  USAGE_ROWS = (r && r.ok && Array.isArray(r.rows)) ? r.rows : [];
+  renderUsageDetail();
+}
+function renderUsageDetail(){
+  const el = $('usage-detail');
+  if (!USAGE_ROWS || !USAGE_ROWS.length) {
+    el.innerHTML = '<p class="empty">暂无用量数据 · No usage data</p>' +
+      '<p class="sub" style="margin-top:8px">调用级用量（按技能计数）不在守护快照内：' +
+      '运行 skill_monitor.py 生成用量数据。Per-skill call counts are not in the ' +
+      'guard snapshot — run skill_monitor.py to generate usage data.</p>';
+    return;
+  }
+  const max = Math.max.apply(null, [1].concat(USAGE_ROWS.map(r => r.total)));
+  el.innerHTML =
+    USAGE_ROWS.map(r =>
+      '<div class="usage-row"><span class="usage-lbl">' + escapeHtml(r.name) + '</span>' +
+      '<div class="bar" style="flex:1"><span style="width:' +
+      Math.round(r.total / max * 100) + '%"></span></div>' +
+      '<span class="usage-num">' + numStr(r.total) + '</span></div>').join('') +
+    '<table style="margin-top:14px"><thead><tr><th>Skill 技能</th><th>Total 总计</th>' +
+    '<th>zcode</th><th>claude</th><th>session</th><th>Last 最近</th></tr></thead><tbody>' +
+    USAGE_ROWS.map(r =>
+      '<tr><td>' + escapeHtml(r.name) + '</td><td>' + numStr(r.total) + '</td><td>' +
+      numStr(r.zcode) + '</td><td>' + numStr(r.claude) + '</td><td>' +
+      numStr(r.marker) + '</td><td>' + escapeHtml(r.last || '—') + '</td></tr>').join('') +
+    '</tbody></table>';
+}
+function render(st){
+  if (!st || typeof st !== 'object') return;
+  initSettings(st);
+  const c = todayCounters(st);
+  const g = GUARD_VIEW[st.guard] || [st.guard, 'inherit'];
+  $('ov-resume').hidden = !st.paused;   // 终审 I-2：paused 时给恢复控件（act('resume')）
+  $('ov-tiles').innerHTML =
+    tile('守护 Guard', '<span style="color:' + g[1] + '">' + escapeHtml(g[0]) + '</span>') +
+    tile('监听根 Roots', numStr(st.watched_roots)) +
+    tile('今日新增 New', numStr(c.new)) +
+    tile('今日漂移 Drift', numStr(c.drift)) +
+    tile('今日拦截 Block', numStr(c.block));
+  const evs = st.events || [];
+  $('ov-events').innerHTML = evs.length ? evs.map(evRow).join('')
+    : '<tr><td colspan="3" class="empty">暂无事件 · No events yet</td></tr>';
+  $('sec-tiles').innerHTML =
+    tile('今日新增 New', numStr(c.new)) +
+    tile('今日漂移 Drift', numStr(c.drift)) +
+    tile('今日拦截 Block', numStr(c.block));
+  // 终审 I-3：Security 行来自 snapshot.skills；备注按技能名取最近事件
+  const skills = st.skills || {};
+  const paths = Object.keys(skills);
+  const noteMap = eventNoteMap(st);
+  $('sec-rows').innerHTML = paths.length
+    ? paths.map(p => secRow(skills[p], noteMap)).join('')
+    : '<tr><td colspan="4" class="empty">暂无扫描数据 · awaiting scan</td></tr>';
+  $('usage-bars').innerHTML = usageHtml(st, c);
+}
+/* ---- Drawer（明细抽屉；数据全部来自 get_state 的 snapshot）---- */
+let DRAWER_SKILL = null;
+function openDrawer(skill, note){
+  DRAWER_SKILL = skill;
+  $('drawer-title').textContent = '技能 · ' + skill;
+  $('drawer-body').innerHTML = '<p>' + escapeHtml(note || '') + '</p>';
+  $('drawer').setAttribute('aria-hidden', 'false');
+  $('drawer').classList.add('open');
+}
+function closeDrawer(){
+  DRAWER_SKILL = null;
+  $('drawer').classList.remove('open');
+  $('drawer').setAttribute('aria-hidden', 'true');
+}
+function drawerPre(text){
+  $('drawer-body').innerHTML =
+    '<pre class="diff-pre">' + escapeHtml(text || '(空 empty)') + '</pre>';
+}
+/* ---- act 桥（浏览器直开无 pywebview 时返回错误对象，不抛异常）---- */
+async function act(name, payload){
+  try { return await (await api()).act(name, payload || {}); }
+  catch (e) { return { error: String(e) }; }
+}
+async function runDrawerAction(name, label){
+  if (!DRAWER_SKILL) { toast('未选择技能 No skill selected'); return; }
+  toast(label + ' …');
+  const r = await act(name, { skill: DRAWER_SKILL });
+  if (r && r.ok) { drawerPre(r.output); toast(label + ' 完成 done'); }
+  else { toast(label + ' 失败 failed: ' + ((r && r.error) || (r && r.output) || '未知错误')); }
+}
+/* ---- toast ---- */
+let TOAST_T = null;
+function toast(msg){
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(TOAST_T);
+  TOAST_T = setTimeout(() => t.classList.remove('show'), 2200);
+}
+/* ---- Settings：开关初值从 snapshot.guard 推断（UI 读不到 config，接受简化：
+   guard=="quarantine" 严格蕴含 block 模式开启，其余一律按关渲染）；
+   点击后以 act 返回值为准，失败回滚 + toast ---- */
+const SW = { block: false, quarantine: false };
+let SW_INIT = false;
+function paintSwitch(id, on){
+  const el = $(id);
+  el.classList.toggle('on', !!on);
+  el.setAttribute('aria-checked', on ? 'true' : 'false');
+}
+function initSettings(st){
+  if (SW_INIT) return;
+  SW_INIT = true;
+  SW.block = (st.guard === 'quarantine');
+  paintSwitch('sw-block', SW.block);
+  paintSwitch('sw-quarantine', SW.quarantine);
+  $('data-dir-path').textContent = '~/.skill-radar（config / snapshots.json / quarantine/）';
+}
+async function toggleSwitch(key, id, actName, payloadKey, label){
+  SW[key] = !SW[key];
+  paintSwitch(id, SW[key]);
+  const payload = {};
+  payload[payloadKey] = SW[key];
+  const r = await act(actName, payload);
+  if (r && r.ok) {
+    toast(label + (SW[key] ? ' 已开启 on' : ' 已关闭 off') +
+          (r.mode ? ' [' + r.mode + ']' : ''));
+  } else {
+    SW[key] = !SW[key];
+    paintSwitch(id, SW[key]);
+    toast(label + ' 设置失败 failed: ' + ((r && r.error) || ''));
+  }
+}
+/* ---- 事件接线 ---- */
+document.querySelectorAll('nav.sidebar button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav.sidebar button').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  document.querySelectorAll('main section').forEach(s => s.classList.remove('active'));
+  document.getElementById('screen-' + b.dataset.screen).classList.add('active');
+  if (b.dataset.screen === 'usage') loadUsage();   // 终审 I-3：切屏时拉用量明细
+});
+function bindRowClicks(id){
+  $(id).addEventListener('click', e => {
+    const tr = e.target.closest('tr');
+    if (tr && tr.dataset && tr.dataset.skill) openDrawer(tr.dataset.skill, tr.dataset.note);
+  });
+}
+bindRowClicks('ov-events');
+bindRowClicks('sec-rows');
+$('btn-show-diff').onclick = () => runDrawerAction('show_diff', 'Show diff 查看变更');
+$('btn-accept').onclick = () => runDrawerAction('accept_drift', 'Accept drift 接受漂移');
+$('btn-open-data').onclick = async () => {
+  const r = await act('open_data_dir', {});
+  toast(r && r.ok ? '已打开数据目录 Data directory opened'
+                  : '打开失败 failed: ' + ((r && r.error) || ''));
+};
+/* 终审 I-2：Overview 屏 paused 时显示恢复按钮，与托盘动态菜单项同一 act 通道 */
+$('ov-resume').onclick = async () => {
+  const r = await act('resume', {});
+  if (r && r.ok) { toast('守护已恢复 Guard resumed'); tick(); }
+  else { toast('恢复失败 failed: ' + ((r && r.error) || '')); }
+};
+function bindSwitch(id, fn){
+  const el = $(id);
+  el.addEventListener('click', fn);
+  el.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); }
+  });
+}
+bindSwitch('sw-block',
+  () => toggleSwitch('block', 'sw-block', 'set_mode', 'block', '拦截模式 Block mode'));
+bindSwitch('sw-quarantine',
+  () => toggleSwitch('quarantine', 'sw-quarantine', 'set_quarantine', 'on', '隔离 Quarantine'));
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+closeDrawer();   // 初始 aria-hidden="true"（抽屉初始在屏外，避免读屏读到）
+tick(); setInterval(tick, 2000);
+</script>
+</body></html>
