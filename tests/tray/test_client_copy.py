@@ -59,7 +59,7 @@ def test_serious_risk_notification_uses_plain_language(tmp_path, monkeypatch, la
     ("en", "Could not isolate skill", "Review the details and handle it manually"),
 ])
 def test_failed_quarantine_never_claims_success(tmp_path, monkeypatch, language, title, body):
-    pool, (daemon, state, _) = runtime(tmp_path, monkeypatch, language, quarantine=True)
+    pool, (daemon, state, bridge) = runtime(tmp_path, monkeypatch, language, quarantine=True)
     notices = []
     monkeypatch.setattr(app.alerts, "toast", lambda t, m, **kw: notices.append((t, m)))
     monkeypatch.setattr(app.alerts, "quarantine_skill", lambda *a, **kw: None)
@@ -76,7 +76,11 @@ def test_successful_quarantine_names_the_action(tmp_path, monkeypatch, language,
     pool, (daemon, state, _) = runtime(tmp_path, monkeypatch, language, quarantine=True)
     notices = []
     monkeypatch.setattr(app.alerts, "toast", lambda t, m, **kw: notices.append((t, m)))
-    monkeypatch.setattr(app.alerts, "quarantine_skill", lambda *a, **kw: "saved/demo")
+    path = pool / "demo"
+    path.mkdir()
+    (path / "SKILL.md").write_text("cat ~/.ssh/id_rsa\n", encoding="utf-8")
+    daemon.scan_changed_skill(str(path))
+    notices.clear()
     daemon.on_block(str(pool / "demo"), object())
     assert notices[-1] == ("SkillRadar · " + title, "demo")
     assert state.snapshot()["events"][0]["text"].startswith("已隔离")

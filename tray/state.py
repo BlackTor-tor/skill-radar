@@ -99,7 +99,7 @@ class TrayState:
     def add_event(self, kind, text):
         with self._lock:
             self.events.insert(0, (kind, _sanitize(text),
-                                   datetime.now().strftime("%H:%M:%S")))
+                                   datetime.now().astimezone().isoformat(timespec="seconds")))
             del self.events[MAX_EVENTS:]
             self._flush()
 
@@ -119,7 +119,7 @@ class TrayState:
             self._flush()
 
     def record_skill(self, skill_path, name, score, status, findings=None,
-                     advice=None, reason=None):
+                     advice=None, reason=None, **metadata):
         """终审 I-3：Security 屏数据源。扫描线程每轮把结果写入（覆盖同路径
         旧值）；与 add_event/bump 同锁，snapshot 消费端拿一致视图。"""
         with self._lock:
@@ -129,6 +129,12 @@ class TrayState:
                 self.skills[skill_path]["findings"] = copy.deepcopy(findings)
             if advice is not None:
                 self.skills[skill_path].update(advice=advice, reason=reason or "")
+            self.skills[skill_path].update(copy.deepcopy(metadata))
+
+    def remove_skill(self, skill_path):
+        """隔离成功后移出活动列表；只移除完整路径匹配的技能。"""
+        with self._lock:
+            return self.skills.pop(skill_path, None)
 
     def snapshot(self):
         with self._lock:

@@ -40,6 +40,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
 import skill_guard as sg  # noqa: E402  (same directory)
+from skill_inventory import collect_inventory, file_times, latest_time, merge_usage  # noqa: E402
 
 SEV_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
 SEV_COLOR = {"CRITICAL": "#dc2626", "HIGH": "#ea580c", "MEDIUM": "#ca8a04",
@@ -145,6 +146,7 @@ table { width:100%; border-collapse:collapse; background:#fff; border:1px solid 
         border-radius:8px; overflow:hidden; font-size:12.5px; }
 th { background:#0f172a; color:#fff; text-align:left; padding:7px 10px; font-size:11.5px; }
 td { padding:6px 10px; border-top:1px solid #e2e8f0; }
+.skill-path { overflow-wrap:anywhere; word-break:break-word; }
 tr:nth-child(even) td { background:#f8fafc; }
 .badge { color:#fff; border-radius:4px; padding:1px 7px; font-size:11px; font-weight:600; display:inline-block; }
 .muted { color:#64748b; font-size:11px; }
@@ -187,37 +189,95 @@ def _badge(text, color):
 
 
 # ------------------------------------------------------------------ usage
-def render_usage_html(data, top=25):
+def _idle_usage_html(usage):
+    """完整安装清单先展示闲置和记录不足，排行只作为后续参考。"""
+    summary = usage["inventory_summary"]
+    body = "<h2>INSTALLED SKILLS · 已安装技能使用概览</h2>"
+    body += _cards([(summary["total_installed"], "installed skills · 已安装技能"),
+                    (summary["never"], "no recorded calls · 无调用记录"),
+                    (summary["inactive"], "idle for 30 days · 近 30 天未调用"),
+                    (summary["unknown"], "insufficient records · 记录不足")])
+    body += '<p class="muted">' + html.escape(summary["coverage_note"]) + "</p>"
+    body += '<p class="muted">同名技能共享名称层面的调用记录；完整路径用于区分安装副本。新安装技能标记观察中。</p>'
+    body += ('<p class="muted">安装时间（估算）来自 SKILL.md 文件创建时间；最近更新时间来自修改时间。'
+             '复制、恢复或重建可能改变创建时间。</p>')
+    inventory_incomplete = summary.get("inventory_complete") is False
+    if inventory_incomplete:
+        body += '<p><strong>安装清单未完整读取。以下仅包含当前可读取的安装目录。</strong></p><ul>'
+        body += "".join('<li class="skill-path">' + html.escape(str(path)) + "</li>"
+                        for path in summary.get("unavailable_inventory_roots", []))
+        body += "</ul>"
+    for label, key in (("无调用记录", "never"), ("近 30 天未调用", "inactive"), ("记录不足", "unknown")):
+        body += f"<h2>{label}</h2>"
+        rows = usage["idle_groups"][key]
+        if not rows:
+            body += '<p class="muted">' + ("当前可读取的安装目录中没有符合该口径的技能。" if inventory_incomplete else
+                    "当前没有符合该口径的技能。") + "</p>"
+            continue
+        body += ('<table><tr><th>skill 技能</th><th>installed path 安装路径</th>'
+                 '<th>total 调用</th><th>last used 最近调用</th><th>安装时间（估算）</th>'
+                 '<th>最近更新时间</th><th>说明</th></tr>')
+        for row in rows:
+            flags = []
+            if row.get("observing"):
+                flags.append("观察中")
+            if row.get("shared_name"):
+                flags.append("同名记录共享")
+            body += (f"<tr><td>{html.escape(str(row['name']))}</td>"
+                     f"<td class='skill-path'>{html.escape(str(row['path']))}</td>"
+                     f"<td>{row['total']}</td><td>{html.escape(str(row.get('last') or '无记录'))}</td>"
+                     f"<td>{html.escape(str(row.get('installed_at') or '安装时间未知'))}</td>"
+                     f"<td>{html.escape(str(row.get('updated_at') or '更新时间未知'))}</td>"
+                     f"<td>{html.escape(' · '.join(flags))}</td></tr>")
+        body += "</table>"
+    return body
+
+
+def render_usage_html(data, top=25, inventory=None, status=None, now=None):
+    """保持旧计数报告调用兼容；传安装清单时追加完整闲置清单。"""
     skills = data.get("skills", {})
     rows = []
     for n, s in skills.items():
-        total = s.get("zcode", 0) + s.get("claude", 0) + s.get("marker", 0)
+        total = sum(s.get(source, 0) for source in ("codex", "zcode", "claude", "marker"))
         rows.append((total, n, s))
     rows.sort(key=lambda r: (-r[0], r[1]))
     invocations = sum(r[0] for r in rows)
     active = sum(1 for r in rows if r[0] > 0)
-    zc = sum(s["zcode"] for _, _, s in rows)
-    cc = sum(s["claude"] for _, _, s in rows)
-    mk = sum(s["marker"] for _, _, s in rows)
+    cx = sum(s.get("codex", 0) for _, _, s in rows)
+    zc = sum(s.get("zcode", 0) for _, _, s in rows)
+    cc = sum(s.get("claude", 0) for _, _, s in rows)
+    mk = sum(s.get("marker", 0) for _, _, s in rows)
     at = sum(s.get("atime", 0) for _, _, s in rows)
     meta = [f"generated 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
             f"skills tracked 追踪技能: {len(rows)}"]
-    body = _cards([(invocations, "total invocations · 总调用"), (active, "active skills · 活跃技能"),
+    body = _cards([(invocations, "total invocations · 总调用"), (active, "skills with recorded calls · 有调用记录"),
                    (len(rows), "skills tracked · 追踪技能"), (mk, "marker session hits · 会话命中"),
                    (at, "atime reads · atime 读取")])
+    if inventory is not None:
+        usage_rows = [{"name": name, **counts, "total": total,
+                       "last": latest_time(counts.get("last_tool_use"), counts.get("last_marker"))}
+                      for total, name, counts in rows]
+        merged = merge_usage(usage_rows, inventory, status or {}, now=now)
+        if isinstance(status, dict) and status.get("unavailable_inventory_roots"):
+            merged["inventory_summary"].update(inventory_complete=False,
+                unavailable_inventory_roots=status["unavailable_inventory_roots"])
+            merged["inventory_summary"]["coverage_note"] += " 部分技能安装目录不可用。"
+        body += _idle_usage_html(merged)
     body += "<h2>TOP SKILLS BY USAGE · 技能调用排行</h2>"
     mx = rows[0][0] if rows and rows[0][0] else 1
     body += _bars([(n, t, mx) for t, n, _ in rows[:top]], "#0f172a")
     body += "<h2>LAYER DISTRIBUTION · 四层来源分布</h2>"
-    body += _cards([(zc, "zcode precise · zcode 精确层"), (cc, "claude precise · claude 精确层"),
+    body += _cards([(cx, "codex precise · Codex 加载记录"), (zc, "zcode precise · zcode 精确层"), (cc, "claude precise · claude 精确层"),
                     (mk, "marker universal · 标记通用层"), (at, "atime fallback · atime 兜底层")])
-    body += ('<h2>ALL SKILLS · 全部技能明细</h2><table><tr><th>skill 技能</th><th>zcode</th>'
+    body += ('<h2>ALL SKILLS · 全部技能明细</h2><table><tr><th>skill 技能</th><th>codex</th><th>zcode</th>'
              '<th>claude</th><th>sessions 会话</th><th>atime</th><th>total 合计</th>'
              '<th>last used 最近使用</th></tr>')
     for t, n, s in rows:
-        last = (s.get("last_tool_use") or "")[:10] or "—"
-        body += (f"<tr><td>{html.escape(n)}</td><td>{s['zcode']}</td><td>{s['claude']}</td>"
-                 f"<td>{s['marker']}</td><td>{s.get('atime', 0)}</td><td><b>{t}</b></td><td>{html.escape(last)}</td></tr>")
+        # 无效旧时间保持可见，合法时间按真实时间先后选择，不偏向来源。
+        last = (latest_time(s.get("last_tool_use"), s.get("last_marker")) or
+                s.get("last_tool_use") or s.get("last_marker") or "")[:10] or "—"
+        body += (f"<tr><td>{html.escape(n)}</td><td>{s.get('codex', 0)}</td><td>{s.get('zcode', 0)}</td><td>{s.get('claude', 0)}</td>"
+                 f"<td>{s.get('marker', 0)}</td><td>{s.get('atime', 0)}</td><td><b>{t}</b></td><td>{html.escape(last)}</td></tr>")
     body += "</table>"
     return _page("Usage Radar — 技能用量统计报告", meta, body)
 
@@ -261,6 +321,9 @@ def _guard_collect(cfg, rules_text, blocklist_text, max_depth=5):
             rep.findings = sg.apply_trust(rep.findings, trusted)
             rep.score = sg.score_findings(rep.findings)
             rep.skill_name = entry
+            # 重扫的检查时间属于本轮报告；不改写安全快照或人工决定。
+            rep.scanned_at = datetime.now().astimezone().isoformat(timespec="seconds")
+            rep.file_time_metadata = file_times(skill)
             # Independent copies can have different drift states; only shared
             # real paths above are duplicates, not matching directory names.
             out.append((entry, skill, rep))
@@ -328,14 +391,18 @@ def render_guard_html(skills_info, snapshots, top=30, detailed=None):
     body += "<h2>TOP SKILLS BY RISK SCORE · 风险分排行与安装建议</h2><table>" \
             "<tr><th>skill 技能</th><th>score 风险分</th><th>status 状态</th>" \
             "<th>findings 发现 (C/H/M/L)</th><th>install advice 安装建议</th>" \
-            "<th>top finding 首要发现</th></tr>"
+            "<th>top finding 首要发现</th><th>安装时间（估算）</th>" \
+            "<th>最近更新时间</th><th>检查时间</th></tr>"
     ranked = sorted(skills_info, key=lambda x: -x[2].score)[:top]
     for name, path, rep in ranked:
         c = {s: sum(1 for f in rep.findings if f.severity == s) for s in SEV_ORDER}
         badge = _badge(str(rep.score), SEV_COLOR["CRITICAL"] if rep.score >= 40 else
                        SEV_COLOR["HIGH"] if rep.score >= 25 else
                        SEV_COLOR["MEDIUM"] if rep.score >= 10 else "#64748b")
-        st = (snapshots.get("skills", {}).get(path, {}) or {}).get("status", "rescanned")
+        saved = snapshots.get("skills", {}).get(path, {}) or {}
+        st = saved.get("status", "rescanned")
+        times = (getattr(rep, "file_time_metadata", None) or file_times(path)) if detailed else saved
+        checked_at = getattr(rep, "scanned_at", None) if detailed else saved.get("scanned_at")
         v, vcolor, reason = advice(rep, st)
         top_f = min(rep.findings, key=lambda f: SEV_ORDER.index(f.severity)) if rep.findings else None
         snippet = sg._sanitize(f"{top_f.rule_id} {top_f.file}:{top_f.line} {top_f.excerpt}")[:90] if top_f else "—"
@@ -344,8 +411,13 @@ def render_guard_html(skills_info, snapshots, top=30, detailed=None):
                  f"<td>{_badge(st, STATUS_COLOR.get(st, '#64748b'))}</td>"
                  f"<td>{counts}</td>"
                  f"<td>{_badge(v, vcolor)}<br><span class='muted'>{html.escape(sg._sanitize(reason))}</span></td>"
-                 f"<td class='muted'>{html.escape(snippet)}</td></tr>")
+                 f"<td class='muted'>{html.escape(snippet)}</td>"
+                 f"<td>{html.escape(str(times.get('installed_at') or '安装时间未知'))}</td>"
+                 f"<td>{html.escape(str(times.get('updated_at') or '更新时间未知'))}</td>"
+                 f"<td>{html.escape(str(checked_at or '检查时间未知'))}</td></tr>")
     body += "</table>"
+    body += ('<p class="muted">安装时间（估算）来自 SKILL.md 文件创建时间；最近更新时间来自修改时间。'
+             '复制、恢复或重建文件可能改变创建时间；检查时间单独记录。</p>')
     if detailed:
         body += ("<p class='muted' style='margin-top:10px'>full findings detail: re-run with "
                  "--json, or check per-skill scan output. drift evidence: skill_guard.py audit --show-diff &lt;skill&gt;</p>")
@@ -366,7 +438,7 @@ def main(argv=None):
     ap.add_argument("--top", type=int, default=25)
     ap.add_argument("--html-only", action="store_true", help="skip PNG (no browser)")
     ap.add_argument("--fast", action="store_true", help="guard report from snapshot scores, no rescan")
-    ap.add_argument("--counters", help="path to skill_usage.json (default: next to skill_monitor.py)")
+    ap.add_argument("--counters", help="path to skill_usage.json (default: persistent skill-radar data directory)")
     ap.add_argument("--rules", help="path to rules yaml (default: repo rules/defaults.yaml)")
     ap.add_argument("--blocklist", help="path to blocklist yaml")
     args = ap.parse_args(argv)
@@ -389,7 +461,18 @@ def main(argv=None):
     made = []
     for t in targets:
         if t == "usage":
-            html_text = render_usage_html(counters, top=args.top)
+            cfg = sg.load_config()
+            inventory = collect_inventory(cfg.get("roots", []))
+            # 生成报告只读已有计数，缺少完整采集状态时不将零计数判为从未调用。
+            meta = counters.get("meta") if isinstance(counters.get("meta"), dict) else {}
+            saved_status = meta.get("usage_status", counters.get("status"))
+            status = dict(saved_status) if isinstance(saved_status, dict) else {}
+            if isinstance(status.get("roots"), list):
+                status["roots"] = [{**root, "exists": os.path.isdir(root.get("path", ""))}
+                                   for root in status["roots"] if isinstance(root, dict)]
+            status["unavailable_inventory_roots"] = [root.get("path", "") for root in cfg.get("roots", [])
+                if isinstance(root, dict) and root.get("path") and not os.path.isdir(root["path"])]
+            html_text = render_usage_html(counters, top=args.top, inventory=inventory, status=status)
             est = _est_height(html_text)
         else:
             snaps = sg.load_snapshots()

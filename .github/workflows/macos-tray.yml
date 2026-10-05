@@ -7,7 +7,7 @@ name: macos-tray
 on:
   push:
     branches: [main]
-    paths: ['tray/**', 'skill_guard.py', 'skill_add.py', 'skill_report.py', 'skill_monitor.py', 'rules/**', 'requirements-gui.txt', 'build_tray.py', '.github/workflows/macos-tray.yml']
+    paths: ['tray/**', 'skill_guard.py', 'skill_add.py', 'skill_report.py', 'skill_monitor.py', 'skill_inventory.py', 'tests/**', 'rules/**', 'requirements-gui.txt', 'build_tray.py', '.github/workflows/macos-tray.yml']
   workflow_dispatch:
 
 jobs:
@@ -19,6 +19,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Chromium for browser checks
+        id: chrome
+        uses: browser-actions/setup-chrome@v1
+      - name: Configure browser path
+        shell: bash
+        run: |
+          browser='${{ steps.chrome.outputs.chrome-path }}'
+          test -x "$browser"
+          echo "SKILL_RADAR_BROWSER=$browser" >> "$GITHUB_ENV"
 
       - name: Install deps
         run: |
@@ -35,21 +48,8 @@ jobs:
       - name: Archive app with executable permissions
         run: ditto -c -k --sequesterRsrc --keepParent dist/SkillRadarTray.app dist/SkillRadarTray-macos.zip
 
-      - name: Smoke — frozen imports & resources
-        run: |
-          python - <<'EOF'
-          import os, zipfile, glob
-          # onefile 未启用（mac 走 windowed .app），直接核对 bundle 内数据文件
-          app = "dist/SkillRadarTray.app"
-          assert os.path.isdir(app), "missing .app bundle"
-          hits = glob.glob(os.path.join(app, "**", "index.html"), recursive=True)
-          assert hits, "tray/web/index.html not bundled"
-          rules = glob.glob(os.path.join(app, "**", "defaults.yaml"), recursive=True)
-          assert rules, "rules/defaults.yaml not bundled"
-          dmg = "dist/SkillRadarTray.dmg"
-          assert os.path.isfile(dmg) and os.path.getsize(dmg) > 1_000_000, "dmg missing/too small"
-          print("bundle OK:", hits[0], "|", rules[0], "| dmg bytes:", os.path.getsize(dmg))
-          EOF
+      - name: Validate app, archive, architecture, and mounted DMG
+        run: python tests/tray/package_smoke.py --app dist/SkillRadarTray.app --archive dist/SkillRadarTray-macos.zip --dmg dist/SkillRadarTray.dmg --expected-arch "$(uname -m)"
 
       - uses: actions/upload-artifact@v4
         with:

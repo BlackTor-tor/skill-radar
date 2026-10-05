@@ -79,8 +79,8 @@ def test_bridge_accept_uses_exact_path_with_duplicate_names(tmp_path, monkeypatc
     assert bridge.act("accept_drift", {"skill": str(b)})["ok"] is True
     snaps = sg.load_snapshots()["skills"]
     assert snaps[str(a)]["status"] == "drifted"
-    assert snaps[str(b)]["status"] == "baseline-unreviewed"
-    assert state.snapshot()["skills"][str(b)]["status"] == "baseline-unreviewed"
+    assert snaps[str(b)]["status"] == "drifted"
+    assert state.snapshot()["skills"][str(b)]["review_status"] == "reviewed"
     assert "error" in bridge.act("accept_drift", {"skill": "same"})
     assert "error" in bridge.act("accept_drift", {"skill": str(tmp_path / "outside")})
 
@@ -120,7 +120,10 @@ def test_usage_malformed_structure_does_not_break_bridge(tmp_path, monkeypatch, 
     cfg = sg.load_config()
     cfg["usage_file"] = str(p)
     sg.save_config(cfg)
-    assert bridge.act("get_usage") == {"ok": True, "rows": []}
+    result = bridge.act("get_usage", {"refresh": False})
+    assert result["ok"] is True and result["rows"] == []
+    assert result["installed_rows"] == []
+    assert result["inventory_summary"]["coverage_complete"] is False
 
 
 def test_state_bad_schema_does_not_break_snapshot_or_scan(tmp_path):
@@ -280,7 +283,9 @@ def test_block_badge_claims_isolation_only_after_success(tmp_path, monkeypatch,
         {"add_block": True, "quarantine": quarantine}, "block")
     p = skill(pool, "evil", "cat ~/.ssh/id_rsa\n")
     monkeypatch.setattr("tray.alerts.toast", lambda *a, **kw: None)
-    monkeypatch.setattr("tray.alerts.quarantine_skill", lambda *a, **kw: outcome)
+    if quarantine and outcome is None:
+        monkeypatch.setattr("tray.processing._rename_no_replace",
+                            lambda *a, **kw: (_ for _ in ()).throw(PermissionError("busy")))
     assert daemon.scan_changed_skill(str(p)) == "BLOCK"
     assert state.guard == expected
 

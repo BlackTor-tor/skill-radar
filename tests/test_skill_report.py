@@ -34,6 +34,26 @@ def test_render_usage_html_contains_layers_and_names():
     assert "技能调用排行" in html and "四层来源分布" in html   # 双语标题
 
 
+def test_usage_html_counts_codex_and_ranks_it_above_smaller_legacy_counts():
+    counters = {"skills": {
+        "only-codex": {"codex": 9, "zcode": 0, "claude": 0, "marker": 0,
+                       "atime": 0, "last_tool_use": "2026-10-04T12:00:00+08:00"},
+        "legacy": {"zcode": 1, "claude": 0, "marker": 0, "atime": 0}}}
+    rendered = sr.render_usage_html(counters, top=1)
+    assert "codex precise" in rendered
+    assert "<th>codex</th>" in rendered
+    assert '<div class="num">10</div>' in rendered
+    assert '<div class="num">2</div>' in rendered
+    assert rendered.index("only-codex") < rendered.index("legacy")
+    assert "<td>only-codex</td><td>9</td>" in rendered
+
+
+def test_usage_html_supports_sparse_current_counter_fields():
+    rendered = sr.render_usage_html({"skills": {"codex-only": {"codex": 1}}})
+    assert "codex-only" in rendered
+    assert '<div class="num">1</div>' in rendered
+
+
 def test_install_verdict_logic():
     from skill_guard import Finding, ScanReport
     clean = ScanReport("a", "/a", [], 0, 1, True)
@@ -95,6 +115,7 @@ def test_find_browser_returns_path_or_none():
 
 
 def test_cli_html_only_writes_files(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sr.sg, "load_config", lambda: {"roots": []})
     counters = tmp_path / "skill_usage.json"
     counters.write_text(json.dumps(COUNTERS), encoding="utf-8")
     out = tmp_path / "reports"
@@ -103,6 +124,159 @@ def test_cli_html_only_writes_files(tmp_path, monkeypatch, capsys):
     files = list(out.glob("usage-report-*.html"))
     assert len(files) == 1
     assert not list(out.glob("*.png")) or all(p.stat().st_size == 0 for p in out.glob("*.png"))
+
+
+def test_usage_report_lists_complete_installed_idle_inventory_before_ranking():
+    from datetime import datetime, timezone
+    inventory = [dict(name=f"unused-{i}", path=f"C:/installed/unused-{i}", installed_at=None,
+                      updated_at=None, install_time_source=None) for i in range(31)]
+    inventory.append(dict(name="old", path="D:/installed/old"))
+    data = {"skills": {"old": {"codex": 3, "last_tool_use": "2026-08-01T00:00:00+00:00"}}}
+    rendered = sr.render_usage_html(data, top=1, inventory=inventory,
+                                   status={"phase": "ready", "files_scanned": 1, "errors": [],
+                                           "roots": [{"path": "C:/test-history", "exists": True}],
+                                           "coverage": {"codex": "supported"}},
+                                   now=datetime(2026, 10, 5, tzinfo=timezone.utc))
+    assert "无调用记录" in rendered and "近 30 天未调用" in rendered
+    for row in inventory:
+        assert row["path"] in rendered
+    assert rendered.index("C:/installed/unused-30") < rendered.index("技能调用排行")
+    assert rendered.index("C:/installed/unused-30") < rendered.index("<h2>近 30 天未调用</h2>")
+
+
+def test_usage_report_missing_collection_evidence_keeps_zero_counts_unknown():
+    inventory = [dict(name="uncertain", path="C:/uncertain")]
+    rendered = sr.render_usage_html({"skills": {}}, inventory=inventory, status={})
+    assert rendered.index("C:/uncertain") > rendered.index("<h2>记录不足</h2>")
+    assert "当前没有符合该口径的技能" in rendered
+    assert "会话日志尚未完成采集" in rendered
+
+
+def test_usage_idle_rows_show_escaped_file_times():
+    inventory = [dict(name="unscanned", path="C:/unscanned",
+                 installed_at="2026-08-01T00:00:00+08:00", updated_at='<img src="bad">',
+                 install_time_source="skill_md_birthtime")]
+    rendered = sr.render_usage_html({"skills": {}}, inventory=inventory)
+    section = rendered.split("TOP SKILLS BY USAGE")[0]
+    assert "安装时间（估算）" in section and "2026-08-01" in section
+    assert "最近更新时间" in section and "&lt;img" in section and "<img" not in section
+    assert "SKILL.md" in section
+
+
+def test_usage_recent_time_chooses_later_marker_and_count_card_is_precise():
+    data = {"skills": {"old": dict(codex=2, marker=1,
+            last_tool_use="2026-08-01T00:00:00+00:00", last_marker="2026-10-04T00:00:00+00:00")}}
+    rendered = sr.render_usage_html(data)
+    assert "2026-10-04" in rendered and "2026-08-01" not in rendered
+    assert "有调用记录" in rendered and "active skills · 活跃技能" not in rendered
+
+
+def test_usage_cli_saved_completed_scan_can_classify_unused_installed_skill(tmp_path, monkeypatch):
+    from tray.usage import UsageService
+    skill = tmp_path / "pool" / "unused-installed"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("# unused", encoding="utf-8")
+    history = tmp_path / "history"
+    history.mkdir()
+    (history / "session.jsonl").write_text('{}\n', encoding="utf-8")
+    usage = UsageService(data_dir=str(tmp_path / "data"),
+                         history_roots=[dict(path=str(history), source="codex")], auto_start=False)
+    usage.scan(background=False)
+    monkeypatch.setattr(sr.sg, "load_config", lambda: {"roots": [{"path": str(skill.parent)}]})
+    out = tmp_path / "reports"
+    assert sr.main(["usage", "--html-only", "--counters", usage.data_file, "--out", str(out)]) == 0
+    rendered = next(out.glob("usage-report-*.html")).read_text(encoding="utf-8")
+    assert rendered.index(str(skill)) < rendered.index("<h2>近 30 天未调用</h2>")
+
+
+def test_usage_cli_missing_inventory_roots_reports_incomplete_not_empty(tmp_path, monkeypatch):
+    missing = str(tmp_path / "missing-pool")
+    monkeypatch.setattr(sr.sg, "load_config", lambda: {"roots": [{"path": missing}]})
+    counters = tmp_path / "data.json"
+    counters.write_text('{"skills": {}}', encoding="utf-8")
+    out = tmp_path / "reports"
+    sr.main(["usage", "--html-only", "--counters", str(counters), "--out", str(out)])
+    rendered = next(out.glob("usage-report-*.html")).read_text(encoding="utf-8")
+    assert "安装清单未完整读取" in rendered and missing in rendered
+    assert "当前没有符合该口径的技能" not in rendered
+
+
+def test_usage_report_invalid_tool_time_still_uses_valid_marker_for_activity():
+    from datetime import datetime, timezone
+    data = {"skills": {"active": dict(codex=1, marker=1,
+            last_tool_use="invalid", last_marker="2026-10-04T00:00:00+00:00")}}
+    rendered = sr.render_usage_html(data, inventory=[dict(name="active", path="C:/active")],
+                                    now=datetime(2026, 10, 5, tzinfo=timezone.utc))
+    assert "2026-10-04" in rendered
+    assert "C:/active" not in rendered  # 已有近期记录的技能不进入闲置或记录不足清单。
+
+
+def test_usage_cli_reads_registered_inventory_without_scanning_real_history(tmp_path, monkeypatch):
+    skill = tmp_path / "pool" / "unused-installed"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("# unused", encoding="utf-8")
+    monkeypatch.setattr(sr.sg, "load_config", lambda: {"roots": [{"path": str(skill.parent)}]})
+    def forbidden(*args, **kwargs):
+        pytest.fail("usage report must not scan security or history")
+    monkeypatch.setattr(sr.sg, "run_engine", forbidden)
+    counters = tmp_path / "counters.json"
+    counters.write_text('{"skills": {}}', encoding="utf-8")
+    out = tmp_path / "reports"
+    assert sr.main(["usage", "--html-only", "--counters", str(counters), "--out", str(out)]) == 0
+    rendered = next(out.glob("usage-report-*.html")).read_text(encoding="utf-8")
+    assert str(skill) in rendered and "记录不足" in rendered
+
+
+def test_guard_report_renders_stored_install_update_and_check_times():
+    snapshots = {"skills": {"/dated": dict(name="dated", status="scanned", score=0,
+                 installed_at="2026-08-01T10:00:00+08:00", updated_at="2026-09-01T11:00:00+08:00",
+                 scanned_at="2026-10-04T12:00:00+08:00", install_time_source="skill_md_birthtime")}}
+    rendered = sr.render_guard_html([], snapshots)
+    assert "安装时间（估算）" in rendered and "最近更新时间" in rendered and "检查时间" in rendered
+    for date in ("2026-08-01", "2026-09-01", "2026-10-04"):
+        assert date in rendered
+    assert "SKILL.md" in rendered
+
+
+def test_guard_cli_snapshot_and_audit_store_file_times(tmp_path):
+    from datetime import datetime
+    skill = tmp_path / "pool" / "dated"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("# clean", encoding="utf-8")
+    os.utime(skill / "SKILL.md", (1720000000, 1720000000))
+    snapshot = sr.sg.snapshot_dir(str(skill), "scanned", 0)
+    assert snapshot["installed_at"]
+    assert datetime.fromisoformat(snapshot["updated_at"]).timestamp() == 1720000000
+    snapshots = {"version": 1, "skills": {}}
+    report = sr.sg.audit_roots([str(skill.parent)], "", "[]", snapshots, {"roots": []})
+    assert snapshots["skills"][str(skill)]["installed_at"] == snapshot["installed_at"]
+    assert "安装时间（估算）" in "\n".join(report)
+
+
+def test_detailed_guard_report_uses_current_check_time_without_changing_snapshot(tmp_path):
+    import copy
+    skill = tmp_path / "pool" / "dated"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("# clean", encoding="utf-8")
+    snapshots = {"skills": {str(skill): dict(name="dated", status="scanned", score=0,
+                 installed_at="2000-01-01T00:00:00+00:00", updated_at="2001-01-01T00:00:00+00:00",
+                 scanned_at="2002-01-01T00:00:00+00:00")}}
+    original = copy.deepcopy(snapshots)
+    info = sr._guard_collect({"roots": [{"path": str(skill.parent)}]}, "", "[]")
+    rendered = sr.render_guard_html(info, snapshots)
+    assert "2002-01-01" not in rendered
+    assert info[0][2].scanned_at in rendered
+    assert snapshots == original
+
+
+def test_fast_guard_report_never_reads_current_files_for_old_snapshot(monkeypatch):
+    def forbidden(*args, **kwargs):
+        pytest.fail("fast report must use stored file times")
+    monkeypatch.setattr(sr, "file_times", forbidden)
+    snapshots = {"skills": {"/missing": dict(name="missing", status="scanned", score=0,
+                 scanned_at="2026-10-04T12:00:00+08:00")}}
+    rendered = sr.render_guard_html([], snapshots)
+    assert "安装时间未知" in rendered and "更新时间未知" in rendered
 
 
 def test_guard_collect_normpath_lookup_hits_drifted_key(tmp_path):

@@ -30,6 +30,9 @@ from tray.state import TrayState    # noqa: E402
 from tray.daemon import Daemon      # noqa: E402
 from tray import alerts             # noqa: E402
 from tray.branding import asset_path, tray_icon  # noqa: E402
+from tray.processing import ProcessingService, _safe_chain  # noqa: E402
+from tray.reports import ReportService, render_events_markdown, render_skill_markdown  # noqa: E402
+from tray.usage import UsageService  # noqa: E402
 
 _CLIENT_COPY = {
     "zh-CN": {
@@ -56,6 +59,12 @@ def _ui_language(cfg=None):
     return language if language in ("zh-CN", "en") else "zh-CN"
 
 
+def _ui_theme(cfg=None):
+    """读取保存的外观，旧配置及不支持的值默认使用浅色。"""
+    theme = (sg.load_config() if cfg is None else cfg).get("ui_theme", "light")
+    return theme if theme in ("light", "dark") else "light"
+
+
 def _client_text(key, cfg=None):
     """托盘菜单及系统通知共用当前语言，技能名称和文件路径保持原样。"""
     return _CLIENT_COPY[_ui_language(cfg)][key]
@@ -69,25 +78,48 @@ class JsBridge:
         self.state = state
         self.runtime = runtime   # 持托盘图标/窗口引用，供动作调用
         self._settings_lock = threading.RLock()
+        self.processing = ProcessingService(daemon, state)
+        self.reports = ReportService(state, usage_provider=lambda: self._get_usage({"refresh": False}))
+        self.usage = None  # 状态请求仅建服务；main 首次补扫在后台读取已知会话目录。
 
     def get_state(self):
         snap = self.state.snapshot()
+        snap.update(self.processing.snapshot())
         cfg = sg.load_config()
         snap["settings"] = {"block": self.daemon.mode == "block",
                             "quarantine": bool(cfg.get("consent", {}).get("quarantine")),
                             "roots": cfg.get("roots", []),
-                            "language": _ui_language(cfg)}
+                            "language": _ui_language(cfg),
+                            "theme": _ui_theme(cfg)}
+        snap["usage_status"] = self._usage_service().snapshot()
         return snap
+
+    def _usage_service(self):
+        with self._settings_lock:
+            if self.usage is None:
+                self.usage = UsageService(data_dir=sg.GUARD_DIR, auto_start=False)
+                self.runtime.usage = self.usage
+            return self.usage
 
     def act(self, name, payload=None):
         handlers = {
             "pause": self._pause, "resume": self._resume,
             "rescan": self._rescan, "open_data_dir": self._open_data_dir,
+            "open_skill_location": self._open_skill_location,
             "show_diff": self._show_diff, "accept_drift": self._accept_drift,
             "set_mode": self._set_mode, "set_quarantine": self._set_quarantine,
-            "set_language": self._set_language,
+            "set_language": self._set_language, "set_theme": self._set_theme,
             "get_usage": self._get_usage,
+            "scan_usage": self._scan_usage,
+            "select_usage_directory": self._select_usage_directory,
+            "generate_report": lambda _: self.reports.generate_report(),
+            "list_reports": lambda _: self.reports.list_reports(),
+            "get_report": lambda p: self.reports.get_report(p.get("id")),
+            "export_report": self._export_report,
+            "get_markdown": self._get_markdown,
+            "copy_markdown": self._copy_markdown,
             "add_root": self._add_root, "remove_root": self._remove_root,
+            "batch_action": self._batch_action,
         }
         h = handlers.get(name)
         if h is None:
@@ -96,8 +128,62 @@ class JsBridge:
             return {"error": "payload must be an object"}
         try:
             return h(payload or {})
-        except (OSError, ValueError, TypeError) as e:
+        except (OSError, ValueError, TypeError, subprocess.SubprocessError) as e:
             return {"error": sg._sanitize(str(e))}
+
+    def _get_markdown(self, payload):
+        if payload.get("subject") == "events":
+            return {"ok": True, "markdown": render_events_markdown(self.state.snapshot()["events"])}
+        if payload.get("subject") == "skill":
+            skill = self._selected_skill(payload)
+            if skill is None:
+                return {"error": "select a registered skill by its full path"}
+            return {"ok": True, "markdown": render_skill_markdown(skill, self.state.snapshot()["skills"][skill])}
+        return {"error": "unknown markdown subject"}
+
+    def _copy_markdown(self, payload):
+        """系统剪贴板兜底；不把报告文本当作命令执行。"""
+        value = payload.get("text")
+        if not isinstance(value, str):
+            return {"error": "provide markdown text"}
+        if sys.platform == "win32":
+            subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                            "$reader = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.UTF8Encoding]::new($false)); "
+                            "$markdownText = $reader.ReadToEnd(); Set-Clipboard -Value $markdownText"], input=value, text=True,
+                           encoding="utf-8", check=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        elif sys.platform == "darwin":
+            subprocess.run(["pbcopy"], input=value, text=True, check=True)
+        else:
+            return {"error": "clipboard unavailable; select and copy the Markdown source"}
+        return {"ok": True}
+
+    def _export_report(self, payload):
+        report_id, fmt = payload.get("id"), payload.get("format", "md")
+        result = self.reports.export_report(report_id, fmt)
+        if not result.get("ok") or self.runtime.window is None:
+            return result
+        # pywebview SAVE_DIALOG=30；只使用用户选定的目标，不接受网页传入写入路径。
+        target = self.runtime.window.create_file_dialog(30, save_filename=result["filename"],
+            file_types=(("Markdown (*.md)" if fmt == "md" else "HTML (*.html)"),))
+        if not target:
+            return {"ok": True, "cancelled": True}
+        destination = target[0] if isinstance(target, (tuple, list)) else target
+        return self.reports.export_report(report_id, fmt, destination=destination)
+
+    def _scan_usage(self, payload):
+        return self._usage_service().scan(payload.get("path"), payload.get("source", "auto"))
+
+    def _select_usage_directory(self, _):
+        if self.runtime.window is None:
+            return {"error": "directory dialog unavailable"}
+        target = self.runtime.window.create_file_dialog(20)  # FOLDER_DIALOG
+        if not target:
+            return {"ok": True, "cancelled": True}
+        path = target[0] if isinstance(target, (tuple, list)) else target
+        return {"ok": True, "path": path}
+
+    def _batch_action(self, payload):
+        return self.processing.submit(payload.get("action"), payload.get("items"))
 
     def _pause(self, _):
         self.state.set_guard("paused")
@@ -131,6 +217,75 @@ class JsBridge:
         except OSError as e:
             return {"error": str(e)}
 
+    def _open_skill_location(self, payload):
+        """只读打开已检查或安装清单中的技能，不要求先执行安全检查。"""
+        requested = payload.get("skill")
+        if not isinstance(requested, str) or not os.path.isabs(requested) or \
+                any(char in requested for char in "\x00\r\n"):
+            return {"error": "请选择报告或技能列表中的完整技能文件夹路径。"}
+        with self.daemon.scan_lock:
+            skill = self._selected_skill(payload)
+            canonical = self._skill_location(requested)
+            if canonical is None:
+                return {"error": "技能文件夹已移走、已隔离或位置无法确认；请刷新报告后重试。"}
+            if skill is None:
+                # 使用报告包含尚未检查的安装项；只枚举登记目录，不读取会话日志。
+                from skill_inventory import collect_inventory
+                identity = sg._canon_path(canonical)
+                if not any(sg._canon_path(row["path"]) == identity
+                           for row in collect_inventory(self.daemon.roots)):
+                    return {"error": "这个位置不在当前技能清单中；请刷新报告并核对监听目录。"}
+                verified = self._skill_location(requested)
+                if verified is None or sg._canon_path(verified) != identity:
+                    return {"error": "技能文件夹位置发生变化；请刷新报告后重试。"}
+                canonical = verified
+            try:
+                if sys.platform == "win32":
+                    os.startfile(canonical, "open")
+                else:
+                    executable = "open" if sys.platform == "darwin" else "xdg-open"
+                    subprocess.run([executable, canonical], check=True, timeout=10)
+            except (OSError, subprocess.SubprocessError):
+                return {"error": "无法打开技能文件夹；请复制完整路径，在文件管理器中手动打开。"}
+            return {"ok": True, "path": canonical}
+
+    def _skill_location(self, skill):
+        """从完整登记根向下复核路径；规范目录用于打开，操作权限不因此放宽。"""
+        if not sg._is_skill_dir(skill):
+            return None
+        canonical = os.path.realpath(skill)
+        canonical_identity = sg._canon_path(canonical)
+        if self.daemon._under(canonical, self.processing.quarantine_dir) or \
+                any(canonical_identity == sg._canon_path(os.path.realpath(root))
+                    for root in self.daemon.roots):
+            return None
+        for root in self.daemon.roots:
+            boundary = os.path.normpath(os.path.abspath(root))
+            current = os.path.normpath(os.path.abspath(skill))
+            identity = sg._canon_path(boundary)
+            selected = sg._canon_path(current)
+            real_root = os.path.realpath(boundary)
+            real_identity = sg._canon_path(real_root)
+            if not selected.startswith(identity.rstrip("/") + "/"):
+                if not selected.startswith(real_identity.rstrip("/") + "/"):
+                    continue
+                # 安装清单使用真实路径；仍从原登记入口检查，防止绕过根内链接。
+                current = os.path.join(boundary, os.path.relpath(current, real_root))
+            while True:
+                if not os.path.isdir(current) or sg._is_reparse(current):
+                    break
+                if sg._canon_path(current) == identity:
+                    # 根以上的 junction 可是已登记别名；根以下不可被链接替换。
+                    if self.daemon._under(canonical, real_root) and _safe_chain(canonical) and \
+                            sg._is_skill_dir(canonical):
+                        return canonical
+                    break
+                parent = os.path.dirname(current)
+                if parent == current:
+                    break
+                current = parent
+        return None
+
     def _show_diff(self, payload):
         skill = self._selected_skill(payload)
         if skill is None:
@@ -143,10 +298,9 @@ class JsBridge:
         if skill is None:
             return {"error": "select a registered skill by its full path"}
         with self.daemon.scan_lock:
-            result = self._run_guard(["audit", "--accept-drift", skill])
-            if result.get("ok"):
-                self.daemon.scan_changed_skill(skill)
-        return result
+            row = self.state.snapshot()["skills"][skill]
+            result = self.processing.process_one("review", {"path": skill, "version": row["version"]})
+            return {"ok": result["status"] == "success", **result}
 
     def _selected_skill(self, payload):
         """名称可在多根重复；只接受当前风险表中的完整注册路径。"""
@@ -230,6 +384,17 @@ class JsBridge:
                 pass  # 菜单后端暂时不可用不影响已保存的语言选择。
         return {"ok": True, "language": language}
 
+    def _set_theme(self, payload):
+        """保存主窗口外观，避免隐私模式清理浏览器存储后丢失选择。"""
+        theme = payload.get("theme")
+        if theme not in ("light", "dark"):
+            return {"error": "choose light or dark"}
+        with self._settings_lock:
+            cfg = sg.load_config()
+            cfg["ui_theme"] = theme
+            sg.save_config(cfg)
+        return {"ok": True, "theme": theme}
+
     def _add_root(self, payload):
         return self._change_root(payload, remove=False)
 
@@ -267,17 +432,30 @@ class JsBridge:
         return {"ok": True, "roots": records}
 
     def _get_usage(self, _):
-        # 终审 I-3：Usage 屏数据源。读 config 的 usage_file（覆盖键，冻结 exe
-        # 下 skill_monitor.DATA_FILE 落临时目录属已知限制，README 有说明），
-        # 未配置则回落 skill_monitor.DATA_FILE。坏 JSON/缺文件回退空行集，
-        # 不炸 UI 轮询。total 口径与 skill_monitor 报告一致（zcode+claude+marker）。
+        from skill_inventory import collect_inventory, latest_time, merge_usage
+        cfg = sg.load_config()
+        service = self._usage_service()
+        if not cfg.get("usage_file"):
+            result = service.get_usage(refresh=_.get("refresh", True), force=_.get("force", False))
+        else:
+            collected = service.get_usage(refresh=False)
+            if collected.get("rows"):
+                result = service.get_usage(refresh=_.get("refresh", True), force=_.get("force", False))
+            else:
+                result = self._legacy_usage(cfg["usage_file"], collected.get("status", service.snapshot()), latest_time)
+        result.update(merge_usage(result.get("rows", []), collect_inventory(self.daemon.roots), result.get("status")))
+        missing = [path for path in self.daemon.roots if not os.path.isdir(path)]
+        summary = result["inventory_summary"]
+        summary["inventory_complete"] = not missing
+        summary["unavailable_inventory_roots"] = missing
+        if missing:
+            summary["coverage_note"] += " 部分技能安装目录不可用，安装清单仅包含当前可读取的目录。"
+        return result
+
+    def _legacy_usage(self, path, status, latest_time):
+        # 旧 usage_file 只在尚未采集到历史调用时兼容回退；不与新计数相加，避免重复。
+        # 正常客户端 main 会自动补扫；单独读取兼容文件无需启动真实日志扫描。
         import json
-        try:
-            import skill_monitor as sm
-            data_file = sm.DATA_FILE
-        except ImportError:
-            data_file = None
-        path = sg.load_config().get("usage_file") or data_file
         data = {}
         if path:
             try:
@@ -287,25 +465,27 @@ class JsBridge:
                 data = {}
         skills = data.get("skills") if isinstance(data, dict) else None
         if not isinstance(skills, dict):
-            return {"ok": True, "rows": []}
+            return {"ok": True, "rows": [], "status": status}
         rows = []
         for name, s in skills.items():
             if not isinstance(s, dict):
                 continue
             try:
-                zcode, claude, marker = (int(s.get("zcode", 0) or 0),
-                                     int(s.get("claude", 0) or 0),
-                                     int(s.get("marker", 0) or 0))
-                atime = int(s.get("atime", 0) or 0)
+                codex = max(0, int(s.get("codex", 0) or 0))
+                zcode, claude, marker = (max(0, int(s.get("zcode", 0) or 0)),
+                                     max(0, int(s.get("claude", 0) or 0)),
+                                     max(0, int(s.get("marker", 0) or 0)))
+                atime = max(0, int(s.get("atime", 0) or 0))
             except (ValueError, TypeError, OverflowError):
                 continue
-            rows.append({"name": str(name), "total": zcode + claude + marker,
+            rows.append({"name": str(name), "total": codex + zcode + claude + marker,
                          "zcode": zcode, "claude": claude, "marker": marker,
                          "atime": atime,
-                         "last": str(s.get("last_tool_use")
-                                     or s.get("last_marker") or "")[:10]})
+                         "last": latest_time(s.get("last_tool_use"), s.get("last_marker"))})
+            if codex:
+                rows[-1]["codex"] = codex
         rows.sort(key=lambda r: (-r["total"], r["name"]))
-        return {"ok": True, "rows": rows[:25]}
+        return {"ok": True, "rows": rows, "status": status}
 
 
 def build_runtime(roots, mode):
@@ -348,7 +528,9 @@ def build_runtime(roots, mode):
                     pass
 
         if cfg.get("consent", {}).get("quarantine"):
-            dest = alerts.quarantine_skill(skill_path, allowed_roots=daemon.roots)
+            outcome = bridge.processing.isolate_automatic(skill_path)
+            dest = next((row["destination"] for row in bridge.processing.snapshot()["quarantine"]
+                         if row["id"] == outcome.get("quarantine_id")), None)
             title = "SkillRadar · " + _client_text("isolated" if dest else "isolate_failed", cfg)
             message = os.path.basename(skill_path) if dest else \
                 _client_text("manual_review", cfg) + " · " + skill_path
@@ -371,6 +553,7 @@ def build_runtime(roots, mode):
         daemon.mark_dirty(abs_path)
 
     runtime.daemon = daemon   # shutdown 停机序列用（stop + join consume）
+    runtime.processing = bridge.processing
     runtime._on_fs_event = _on_fs_event
     return daemon, state, bridge
 
@@ -561,6 +744,7 @@ def main():
     ui.events.closing += lambda: _handle_ui_closing(bridge.runtime, ui)
     icon.run_detached()
     bridge.act("rescan")   # 首屏已有技能也应显示风险记录。
+    bridge._usage_service().scan()  # 已知会话目录自动补扫，耗时操作留在后台。
     # 当前 Windows WinForms 后端也读取 start(icon)；macOS 应用包图标由打包配置提供。
     webview.start(icon=asset_path("skillradar.ico" if sys.platform == "win32" else "skillradar.png"))
     shutdown(bridge.runtime)   # start() 返回 = 退出流程收尾（shutdown 幂等）
@@ -581,6 +765,13 @@ def shutdown(runtime):
     if getattr(runtime, "_shutdown_done", False):
         return
     runtime._shutdown_done = True
+    processing = getattr(runtime, "processing", None)
+    if processing:
+        processing.stop()
+        processing.join()
+    usage = getattr(runtime, "usage", None)
+    if usage is not None:
+        usage.stop()
     watcher = getattr(runtime, "watcher", None)
     if watcher:
         _stop_watcher(watcher)

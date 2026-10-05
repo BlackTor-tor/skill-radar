@@ -11,6 +11,8 @@ from datetime import datetime
 from dataclasses import asdict
 
 import skill_guard as sg
+from skill_inventory import file_times
+from tray.review import ReviewStore, capture_version, effective_rules_text
 
 DEBOUNCE_S = 3
 
@@ -24,11 +26,12 @@ class Daemon:
     on_block: 钩子（app 层接 alerts.quarantine_or_alert），默认只记事件。"""
 
     def __init__(self, roots, mode="warn", state=None, rules_text=None,
-                 blocklist_text=None):
+                 blocklist_text=None, review_store=None):
         from tray.state import TrayState
         self.roots = [os.path.normpath(r) for r in roots]
         self.mode = mode
         self.state = state or TrayState()
+        self.review_store = review_store or ReviewStore()
         self.state.watched_roots = len(self.roots)
         self._dirty = {}          # normpath → (稳定时间戳, last_event_ts)
         self._lock = threading.Lock()
@@ -99,27 +102,75 @@ class Daemon:
             with self.scan_lock:
                 return self._scan_once(skill_path)
         except Exception as e:   # 扫描异常不崩守护（规格 §5）
+            self.state.record_skill(skill_path, os.path.basename(skill_path),
+                                    0, "error", check_status="error",
+                                    review_status="pending", scan_complete=False,
+                                    scan_issues=["scan_failed"], version="",
+                                    raw_findings=[], raw_score=0, scan_gap_details=[],
+                                    scanned_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+                                    **file_times(skill_path))
             self.state.add_event("error", f"扫描异常 {skill_path}: {e}")
             return "ERROR"
 
     def _scan_once(self, skill_path):
         cfg = sg.load_config()
-        rules = sg.parse_rules(self.rules_text)
+        # 固定本轮实际规则文本；扫描前后均复核，规则文件变化也使结果不完整。
+        rules_text = effective_rules_text(self.rules_text)
+        blocklist_text = self.blocklist_text
+        rules = sg.parse_rules(rules_text)
+        before = capture_version(skill_path, rules_text, blocklist_text)
         import hashlib
         body = sg._read_regular_file(os.path.join(skill_path, "SKILL.md"), sg.MAX_HASH_FILE_BYTES)
         trusted = sg._is_trusted(cfg, skill_path,
                                  hashlib.sha256(body).hexdigest() if body is not None else "")
-        rep = sg.run_engine(skill_path, rules, self.blocklist_text)
+        rep = sg.run_engine(skill_path, rules, blocklist_text)
+        raw_findings = list(rep.findings)
+        raw_score = rep.score
+        after = capture_version(skill_path, self.rules_text, self.blocklist_text)
+        issues = sorted(set(before["issues"] + after["issues"]))
+        if before["version"] != after["version"]:
+            issues.append("changed_during_scan")
+        if any(f.rule_id == "SR-OBFUS-004" for f in raw_findings):
+            issues.append("decode_limit")
+        complete = before["complete"] and after["complete"] and not issues
+        digest_complete = all(issue.startswith(("binary_not_text_checked:", "text_size_limit:"))
+                              for captured in (before, after) for issue in captured["issues"])
+        if digest_complete:
+            # 二进制及文本超限文件仍有完整原始哈希；读取失败只暂停例外。
+            self.review_store.invalidate_changed(skill_path, after["version"])
+        review_status = self.review_store.decision_for(skill_path, after["version"])
+        if not complete and review_status == "trusted":
+            # 即使内容暂时相同，无法完整检查时也不得应用旧的人工信任例外。
+            review_status = "pending"
+        check_status = "incomplete" if not complete else \
+            "attention" if raw_findings else "healthy"
+        if check_status == "healthy" and review_status == "pending":
+            review_status = "not_required"
+        metadata = {**file_times(skill_path), "version": after["version"], "scan_complete": complete,
+                    "scan_issues": issues, "check_status": check_status,
+                    "scan_gap_details": sg._sanitize_json([asdict(f) for f in raw_findings
+                                                           if f.rule_id == "SR-OBFUS-004"]),
+                    "scan_coverage": {**after["coverage"],
+                                      "text_files_checked": rep.files_scanned},
+                    "review_status": review_status, "raw_score": raw_score,
+                    "raw_findings": sg._sanitize_json([asdict(f) for f in raw_findings]),
+                    "scanned_at": datetime.now().astimezone().isoformat(timespec="seconds")}
         rep.findings = sg.apply_trust(rep.findings, trusted)
         rep.score = sg.score_findings(rep.findings)
 
         has_crit = any(f.severity == "CRITICAL" for f in rep.findings)
-        if has_crit and self.mode == "block":
+        manual_trusted = complete and review_status == "trusted"
+        # 检查中被替换或读取失败的目录不能按旧报告移动；下一轮稳定后重查。
+        block_evidence_stable = not any(issue == "changed_during_scan" or
+            issue.startswith(("file_changed_during_capture:", "file_unreadable:",
+                              "directory_unreadable:", "invalid_skill_directory"))
+            for issue in issues)
+        if has_crit and self.mode == "block" and not manual_trusted and block_evidence_stable:
             self.state.bump("block")
             self.state.set_guard("alert")   # 成功隔离由 app 钩子升级为 quarantine。
             self.state.add_event("block", f"CRITICAL 拦截 {skill_path}")
             # 终审 I-3：BLOCK 分支也进 Security 屏数据（快照不落，state 直写）
-            self._record_report(skill_path, rep, "blocked")
+            self._record_report(skill_path, rep, "blocked", **metadata)
             self.on_block(skill_path, rep)
             return "BLOCK"
 
@@ -132,11 +183,12 @@ class Daemon:
             d = sg.diff_snapshot(old["hashes"], new_hashes)
             status = "DRIFT" if (d["added"] or d["removed"] or d["changed"]) \
                 else "OK"
-        entry = {"name": os.path.basename(skill_path),
+        entry = {**{key: metadata[key] for key in ("installed_at", "updated_at", "install_time_source")},
+                 "name": os.path.basename(skill_path),
                  "status": {"NEW": "baseline-unreviewed",
                             "DRIFT": "drifted"}.get(status, old["status"] if old else "scanned"),
                  "score": rep.score,
-                 "scanned_at": datetime.now().isoformat(timespec="seconds"),
+                 "scanned_at": datetime.now().astimezone().isoformat(timespec="seconds"),
                  "hashes": new_hashes}
         # prev_hashes 语义与 audit_roots 一致：DRIFT 确认时留住被覆写的旧基线
         #（--show-diff 的 inspect 通道）；无变化轮次透传，防 drift 后一轮 OK 把它冲掉
@@ -165,20 +217,21 @@ class Daemon:
         # 终审 I-3：成功路径（NEW/DRIFT/OK）把 name/score/status 写进 Security
         # 屏数据源；status 用快照条目口径（NEW→baseline-unreviewed、DRIFT→drifted、
         # OK 透传旧值），UI 的建议列由 status+score 推导
-        self._record_report(skill_path, rep, entry["status"])
-        if status in ("NEW", "DRIFT") or has_crit:
+        self._record_report(skill_path, rep, entry["status"], **metadata)
+        if not manual_trusted and (status in ("NEW", "DRIFT") or has_crit or
+                (raw_findings and review_status == "pending")):
             self.state.set_guard("alert")
             self.on_alert(skill_path, rep, status)
         return status
 
-    def _record_report(self, skill_path, rep, status):
+    def _record_report(self, skill_path, rep, status, **metadata):
         """风险表与 CLI 报告共用安装建议，明细只传纯 JSON 数据。"""
         from skill_report import install_verdict
         advice, _, reason = install_verdict(rep, status)
         self.state.record_skill(skill_path, os.path.basename(skill_path),
                                 rep.score, status,
                                 sg._sanitize_json([asdict(f) for f in rep.findings]),
-                                advice, sg._sanitize(reason))
+                                advice, sg._sanitize(reason), **metadata)
 
     # ---- 扫描线程主循环（app 层起线程跑）----
 

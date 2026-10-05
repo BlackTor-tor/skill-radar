@@ -1,0 +1,103 @@
+// Chromium interaction checks for batch actions, using an isolated fake desktop bridge.
+import assert from 'node:assert/strict';
+import {spawn} from 'node:child_process';
+import {existsSync,readFileSync,writeFileSync,mkdtempSync,rmSync,mkdirSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {basename,dirname,resolve,sep} from 'node:path';
+import {fileURLToPath,pathToFileURL} from 'node:url';
+const repo=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
+const args=process.argv.slice(2), option=name=>args.includes(name)?args[args.indexOf(name)+1]:null;
+const browserPath=option('--browser') || process.env.SKILL_RADAR_BROWSER;
+assert(browserPath && existsSync(browserPath),'Provide Chromium with --browser');
+const htmlPath=resolve(option('--html') || resolve(repo,'tray/web/index.html'));
+const captureDir=option('--capture'), prefix=option('--prefix') || 'batch';
+const width=Number(option('--width') || 1080),height=Number(option('--height') || 720);
+const language=option('--language') || 'zh-CN', profile=mkdtempSync(resolve(tmpdir(),'skill-radar-batch-ui-'));
+const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const risk={severity:'CRITICAL',rule_id:'UPLOAD_PRIVATE',file:'scripts/setup.sh',line:4,message:'发现可能读取并上传本机私密文件的指令。',excerpt:'sensitive content'};
+const row=(name,extra={})=>({name,score:0,status:'baseline-unreviewed',version:'v1-'+name,
+  findings:[],raw_findings:[],raw_score:0,scan_complete:true,scan_issues:[],check_status:'healthy',review_status:'not_required',...extra});
+const state={guard:'running',watched_roots:1,settings:{language:'zh-CN',roots:[{path:'F:\\Skills'}]},skills:{
+  'F:\\Skills\\danger':row('danger',{status:'blocked',score:0,raw_score:46,raw_findings:[risk],check_status:'attention',review_status:'pending'}),
+  'F:\\Skills\\trusted':row('trusted',{status:'trusted',score:0,raw_score:46,raw_findings:[risk],check_status:'attention',review_status:'trusted'}),
+  'F:\\Skills\\healthy':row('healthy'),
+  'F:\\Other\\danger':row('danger',{raw_score:35,raw_findings:[{...risk,severity:'HIGH'}],check_status:'attention',review_status:'pending'}),
+  'F:\\Skills\\incomplete':row('incomplete',{scan_complete:false,check_status:'incomplete',review_status:'pending',scan_issues:['read_failed']}),
+},quarantine:[{id:'q1',name:'isolated-demo',original_path:'F:\\Skills\\isolated-demo',path:'C:\\Demo\\quarantine\\q1',destination:'C:\\Demo\\quarantine\\q1',version:'q-version',reason:'Serious risk',isolated_at:'2026-10-04T10:00:00',status:'isolated'}],events:[{ts:'2026-10-04T18:30:00+08:00',kind:'new',text:'demo **checked**'}]};
+const bridge=`Object.defineProperty(navigator,'clipboard',{value:undefined,configurable:true});window.__batch_boot=crypto.randomUUID();window.__batch_state=${JSON.stringify(state)};
+window.__batch_actions=[];window.__batch_autofinish=true;
+window.__report_fail=false;window.__copied='';
+const fakeReport={id:'report1',generated_at:'2026-10-04T18:31:12+08:00',markdown:'# Check report\\n\\nDate: 2026-10-04T18:31:12+08:00\\n\\n## demo\\n\\n<script>window.__unsafe=true</script>',html:'<h1>Check report</h1>'};
+try{localStorage.clear();}catch{}
+window.pywebview={api:{get_state:async()=>structuredClone(window.__batch_state),act:async(name,payload)=>{
+window.__batch_actions.push({name,payload});
+if(name==='set_language'){window.__batch_state.settings.language=payload.language;return{ok:true};}
+if(name==='generate_report')return window.__report_fail?{error:'disk full'}:{ok:true,report:fakeReport};
+if(name==='list_reports')return {ok:true,reports:[fakeReport]};
+if(name==='get_report')return {ok:true,report:fakeReport};
+if(name==='export_report')return {ok:true,path:'C:/Downloads/check.md'};
+if(name==='get_markdown')return {ok:true,markdown:payload.subject==='events'?'# Events\\n\\n## demo **checked**':'# Skill results\\n\\n<script>window.__unsafe=true</script>\\n\\n## Findings\\n\\n'+payload.skill};
+if(name==='copy_markdown'){window.__copied=payload.text;return{ok:true};}
+if(name==='select_usage_directory')return {ok:true,cancelled:true};
+if(name==='get_usage')return {ok:true,installed_rows:[{name:'demo',path:'F:/Skills/demo',total:5,last:'2026-10-04T18:20:00+08:00',usage_state:'active'}],idle_groups:{never:[],inactive:[],unknown:[]},inventory_summary:{total_installed:1,never:0,inactive:0,unknown:0,active:1,total_invocations:5,coverage_complete:true},rows:[{name:'demo',total:5,codex:3,zcode:2,claude:0,marker:0,last:'2026-10-04T18:20:00+08:00'}],status:{phase:'ready',scanning:false,last_scan:'2026-10-04T18:35:00+08:00',files_scanned:12,errors:[],roots:[{source:'codex',path:'F:/CodexData/.codex/sessions',exists:true}],coverage:{codex:'structured Skill and file reads'}}};
+if(name!=='batch_action')return{ok:true,output:'Changes'};
+const id='job-'+window.__batch_actions.length;
+window.__batch_state.batch_job={id,action:payload.action,status:'running',items:structuredClone(payload.items),total:payload.items.length,completed:0,results:[]};
+if(window.__batch_autofinish)setTimeout(()=>{
+const job=window.__batch_state.batch_job;job.status='done';job.completed=job.total;
+job.results=job.items.map((item,i)=>({...item,status:i===1?'failed':i===2?'skipped':'success',code:i===1?'move_failed':i===2?'version_changed':'ok'}));
+if(payload.action==='rescan')for(const item of payload.items){const r=window.__batch_state.skills[item.path];r.check_status='healthy';r.scan_complete=true;r.review_status='not_required';r.scan_issues=[];r.scanned_at='2026-10-04T19:00:00+08:00';}
+if(payload.action==='review')for(const item of payload.items){const row=window.__batch_state.skills[item.path];if(row)row.review_status='reviewed';}
+},80);
+return{ok:true,job_id:id};
+}}};`;
+let browser,ws,closeBrowser;const results=[];
+try{
+browser=spawn(browserPath,['--headless=new','--no-first-run','--no-default-browser-check','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{windowsHide:true,stdio:'ignore'});
+browser.on('error',error=>results.push({name:'browser_start',ok:false,error:error.message}));
+const portFile=resolve(profile,'DevToolsActivePort');let until=Date.now()+12000;
+while(!existsSync(portFile)&&Date.now()<until)await pause(40);
+assert(existsSync(portFile),'Chromium did not expose its temporary endpoint');
+const port=readFileSync(portFile,'utf8').split(/\r?\n/)[0];
+const target=(await(await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(p=>p.type==='page');
+ws=new WebSocket(target.webSocketDebuggerUrl);await new Promise((ok,fail)=>{ws.addEventListener('open',ok,{once:true});ws.addEventListener('error',fail,{once:true});});
+let id=0;const pending=new Map();
+ws.addEventListener('message',event=>{const data=JSON.parse(event.data),request=pending.get(data.id);if(!request)return;pending.delete(data.id);clearTimeout(request.timeout);data.error?request.reject(new Error(JSON.stringify(data.error))):request.resolve(data.result);});
+const cdp=(method,params={})=>new Promise((ok,fail)=>{const current=++id,timeout=setTimeout(()=>{pending.delete(current);fail(new Error('CDP timeout '+method));},8000);pending.set(current,{resolve:ok,reject:fail,timeout});ws.send(JSON.stringify({id:current,method,params}));});
+closeBrowser=()=>cdp('Browser.close');
+const evaluate=async expression=>{const value=await cdp('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});assert(!value.exceptionDetails,JSON.stringify(value.exceptionDetails));return value.result.value;};
+const waitFor=async expression=>{const deadline=Date.now()+2000;while(Date.now()<deadline){if(await evaluate(expression))return;await pause(25);}throw new Error('UI condition: '+expression);};
+const click=async selector=>{const point=await evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});if(!el)return null;el.scrollIntoView({block:'center'});const r=el.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2,width:r.width,height:r.height};})()`);assert(point?.width&&point.height,'Missing visible target: '+selector);for(const type of ['mousePressed','mouseReleased'])await cdp('Input.dispatchMouseEvent',{type,x:point.x,y:point.y,button:'left',clickCount:1});};
+const key=async(key,code,keyCode)=>{for(const type of ['keyDown','keyUp'])await cdp('Input.dispatchKeyEvent',{type,key,code,windowsVirtualKeyCode:keyCode,nativeVirtualKeyCode:keyCode});};
+const search=async query=>evaluate(`(()=>{const input=document.getElementById('skill-search');input.value=${JSON.stringify(query)};input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+const sync=()=>evaluate('tick()');
+await cdp('Page.enable');await cdp('Runtime.enable');
+await cdp('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+await cdp('Page.addScriptToEvaluateOnNewDocument',{source:bridge});
+const reset=async()=>{const previous=await evaluate('window.__batch_boot');await cdp('Page.navigate',{url:pathToFileURL(htmlPath).href});await waitFor(`window.__batch_boot!==${JSON.stringify(previous)} && !!document.querySelector('#sec-rows tr[data-skill]')`);await click('nav.sidebar button[data-screen="security"]');};
+const selected=()=>evaluate(`document.querySelectorAll('#sec-rows input.skill-select:checked').length`);
+const first=()=>click('#sec-rows input.skill-select');
+const openConfirm=async action=>{await first();await click(`[data-batch-action="${action}"]`);};
+const screenshot=async name=>{if(!captureDir)return;await evaluate(`changeLanguage(${JSON.stringify(language)})`);await evaluate(`if(document.getElementById('drawer').hidden)document.getElementById('main-content').scrollTop=0`);mkdirSync(captureDir,{recursive:true});const audit=await evaluate(`(()=>{const main=document.getElementById('main-content'),drawer=document.getElementById('drawer');return{overflow:document.documentElement.scrollWidth>innerWidth+1||main.scrollWidth>main.clientWidth+1||(!drawer.hidden&&drawer.scrollWidth>drawer.clientWidth+1)};})()`);results.push({name:'layout_'+name,ok:!audit.overflow,...audit});const data=await cdp('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});writeFileSync(resolve(captureDir,prefix+'-'+name+'.png'),Buffer.from(data.data,'base64'));await evaluate(`changeLanguage('zh-CN')`);};
+const check=async(name,fn)=>{try{await reset();await fn();results.push({name,ok:true});}catch(error){results.push({name,ok:false,error:error.stack||error.message});}};
+
+await check('attention_filter',async()=>{await click('.filter[data-filter="attention"]');assert.equal(await evaluate(`document.querySelectorAll('#sec-rows tr[data-skill]').length`),4);const help=await evaluate(`document.getElementById('attention-help').innerText`);assert(help.includes('风险')&&help.includes('未完成'));await search('healthy');assert.equal(await evaluate(`document.querySelectorAll('#sec-rows tr[data-skill]').length`),0);});
+await check('duplicate_path_colors',async()=>{const chips=await evaluate(`Array.from(document.querySelectorAll('#sec-rows [data-path-color]')).map(el=>({path:el.dataset.pathColor,color:getComputedStyle(el).backgroundColor,text:el.innerText}))`);assert.equal(chips.length,2);assert.notEqual(chips[0].color,chips[1].color);const before=chips.map(c=>c.color).sort();await click('.filter[data-filter="attention"]');assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('#sec-rows [data-path-color]')).map(el=>getComputedStyle(el).backgroundColor).sort()`),before);await screenshot('path-colors');});
+await check('reports_generate_display_download',async()=>{await click('nav.sidebar button[data-screen="reports"]');await click('#btn-generate-report');await waitFor(`document.getElementById('report-preview').innerText.includes('2026-10-04')`);assert.equal(await evaluate(`window.__unsafe`),undefined);await click('#btn-copy-report');await waitFor(`window.__copied.startsWith('# Check report')`);await click('#btn-export-report-md');await waitFor(`window.__batch_actions.some(a=>a.name==='export_report'&&a.payload.format==='md')`);await click('#btn-export-report-html');assert.equal(await evaluate(`window.__batch_actions.at(-1).payload.format`),'html');await screenshot('report');});
+await check('reports_failure_retry',async()=>{await click('nav.sidebar button[data-screen="reports"]');await evaluate(`window.__report_fail=true`);await click('#btn-generate-report');await waitFor(`document.getElementById('report-status').innerText.includes('disk full')`);assert.equal(await evaluate(`document.getElementById('btn-generate-report').disabled`),false);await evaluate(`window.__report_fail=false`);await click('#btn-generate-report');await waitFor(`document.getElementById('report-preview').innerText.includes('2026-10-04')`);});
+await check('events_detail_markdown_copy',async()=>{await click('nav.sidebar button[data-screen="overview"]');assert.equal(await evaluate(`document.getElementById('btn-copy-events')`),null);assert((await evaluate(`document.querySelector('#ov-events .markdown-body').innerHTML`)).includes('<strong>checked</strong>'));await evaluate(`window.__batch_state.events[0].skill=Object.keys(window.__batch_state.skills)[0]`);await sync();await click('#ov-events tr[data-skill]');await click('#btn-copy-skill');await waitFor(`window.__copied.includes('# Skill results')`);assert((await evaluate(`window.__copied`)).includes(await evaluate(`window.__batch_state.events[0].skill`)));});
+await check('skill_markdown_safe',async()=>{await click('#sec-rows tr[data-skill]');await click('#btn-copy-skill');await waitFor(`window.__copied.includes('# Skill results')`);assert.equal(await evaluate(`window.__unsafe`),undefined);await click('#skill-markdown summary');assert((await evaluate(`document.getElementById('skill-markdown-preview').innerText`)).includes('<script>'));await screenshot('markdown-detail');});
+await check('usage_automatic_guidance',async()=>{await click('nav.sidebar button[data-screen="usage"]');await click('[data-usage-view="ranking"]');await waitFor(`document.querySelector('#usage-detail table')`);await click('#usage-log-details > summary');const text=await evaluate(`document.getElementById('usage-discovery').innerText`);assert(text.includes('会话日志')&&text.includes('技能文件夹')&&text.includes('F:/CodexData/.codex/sessions'));assert(!await evaluate(`window.__batch_actions.some(a=>a.name==='select_usage_directory')`));await screenshot('usage');});
+await check('usage_codex_counts',async()=>{await click('nav.sidebar button[data-screen="usage"]');await click('[data-usage-view="ranking"]');await waitFor(`document.querySelector('#usage-detail table')`);assert((await evaluate(`document.querySelector('#usage-detail table').innerText`)).includes('Codex'));assert((await evaluate(`document.querySelector('#usage-detail tbody').innerText`)).includes('3'));});
+await check('usage_manual_folder_cancel',async()=>{await click('nav.sidebar button[data-screen="usage"]');await waitFor(`!document.getElementById('btn-select-usage-dir').disabled`);await click('#usage-log-details > summary');await click('#usage-optional-title');await click('#btn-select-usage-dir');await waitFor(`window.__batch_actions.some(a=>a.name==='select_usage_directory')`);assert(!await evaluate(`window.__batch_actions.some(a=>a.name==='scan_usage')`));});
+await check('recheck_updates_status',async()=>{await search('incomplete');await click('#sec-rows tr[data-skill]');await click('#detail-processing [data-batch-action="rescan"]');await click('#btn-confirm-processing');await waitFor(`window.__batch_state.batch_job?.status==='done'`);await sync();await click('#btn-close-drawer');const text=await evaluate(`document.getElementById('sec-rows').innerText`);assert(text.includes('检查正常'));assert(!text.includes('检查未完成'));});
+await check('features_english',async()=>{await evaluate(`changeLanguage('en')`);await click('nav.sidebar button[data-screen="reports"]');assert.equal(await evaluate(`document.getElementById('reports-title').innerText`),'Check reports');await click('nav.sidebar button[data-screen="usage"]');await click('#usage-log-details > summary');assert((await evaluate(`document.getElementById('usage-discovery').innerText`)).includes('session logs'));});
+await check('incomplete_recheck_warning',async()=>{await evaluate(`window.__batch_state.batch_job={id:'gap-job',action:'rescan',status:'done',total:1,completed:1,results:[{path:'F:/Skills/incomplete',status:'success',code:'scan_incomplete',scan_complete:false,scanned_at:'2026-10-04T19:00:00+08:00',scan_issues:['text_size_limit:reference.md'],scan_coverage:{limits:{text_bytes:2000000}}}]}`);await sync();await click('#btn-batch-results');assert.equal(await evaluate(`!!document.querySelector('#drawer-body .processing-item .badge.warn')`),true);const text=await evaluate(`document.getElementById('drawer-body').innerText`);assert(text.includes('reference.md')&&text.includes('2026-10-04T19:00:00+08:00'));});
+await check('detail_time_does_not_duplicate_on_poll',async()=>{await evaluate(`for(const r of Object.values(window.__batch_state.skills)){r.scanned_at='2026-10-04T19:11:12+08:00';r.scan_coverage={asset_files_hashed:1,assets_without_text_check:['icon.png']};}`);await sync();await click('#sec-rows tr[data-skill]');await sync();await sync();const text=await evaluate(`document.getElementById('drawer-body').innerText`);assert.equal(text.split('2026-10-04T19:11:12+08:00').length-1,1);assert.equal(text.split('icon.png').length-1,1);});
+await check('open_skill_location_exact_path',async()=>{await click('#sec-rows tr[data-skill]');const path=await evaluate(`document.querySelector('#sec-rows tr[data-skill]').dataset.skill`);await click('#btn-open-skill-location');await waitFor(`window.__batch_actions.some(a=>a.name==='open_skill_location')`);assert.equal(await evaluate(`window.__batch_actions.find(a=>a.name==='open_skill_location').payload.skill`),path);await screenshot('detail-actions');});
+await check('action_button_backgrounds',async()=>{await click('#sec-rows tr[data-skill]');const colors=await evaluate(`['rescan','review','trust','quarantine'].map(action=>getComputedStyle(document.querySelector('#detail-processing [data-batch-action="'+action+'"]')).backgroundColor)`);assert.equal(new Set(colors).size,3);assert(colors.every(c=>c!=='rgba(0, 0, 0, 0)'&&c!=='rgb(255, 255, 255)'));});
+await check('decode_gap_has_remedy',async()=>{await evaluate(`window.__batch_state.batch_job={id:'decode-job',action:'rescan',status:'done',total:1,completed:1,results:[{path:'F:/Skills/incomplete',status:'success',code:'scan_incomplete',scan_complete:false,scanned_at:'2026-10-05T00:08:30+08:00',scan_issues:['decode_limit:references/template.html:240'],raw_findings:[{rule_id:'SR-OBFUS-004',severity:'LOW',file:'references/template.html',line:240,message:'Candidate count reached',excerpt:'placeholder'}]}]}`);await sync();await click('#btn-batch-results');const text=await evaluate(`document.getElementById('drawer-body').innerText`);assert(text.includes('编码')&&text.includes('拆分')&&text.includes('template.html')&&text.includes('240'));assert(!text.includes('检查未完成，请重新检查'));});
+await check('usage_datetime_follows_language',async()=>{await cdp('Emulation.setTimezoneOverride',{timezoneId:'Asia/Singapore'});await click('nav.sidebar button[data-screen="usage"]');await click('[data-usage-view="ranking"]');await waitFor(`document.querySelector('#usage-detail table')`);const read=()=>evaluate(`({summary:document.getElementById('usage-bars').innerText,rows:document.getElementById('usage-detail').innerText,scan:document.getElementById('usage-scan-status').innerText})`);let shown=await read();assert(shown.summary.includes('2026年10月04日 18:20:00'));assert(shown.rows.includes('2026年10月04日 18:20:00'));assert(shown.scan.includes('2026年10月04日 18:35:00'));await evaluate(`changeLanguage('en')`);shown=await read();assert(shown.summary.includes('2026-10-04 18:20:00'));assert(shown.rows.includes('2026-10-04 18:20:00'));assert(shown.scan.includes('2026-10-04 18:35:00'));await evaluate(`changeLanguage('zh-CN')`);shown=await read();assert(shown.scan.includes('2026年10月04日 18:35:00'));});
+}catch(error){results.push({name:'harness',ok:false,error:error.stack||error.message});}
+finally{try{if(closeBrowser)await closeBrowser();}catch{}if(ws)ws.close();if(browser&&browser.exitCode===null){browser.kill();await Promise.race([new Promise(resolve=>browser.once('exit',resolve)),pause(2000)]);}assert(profile.startsWith(resolve(tmpdir())+sep)&&basename(profile).startsWith('skill-radar-batch-ui-'));try{rmSync(profile,{recursive:true,force:true,maxRetries:6,retryDelay:150});}catch{}}
+console.log(JSON.stringify({html:htmlPath,browser:browserPath,results}));process.exitCode=results.some(row=>!row.ok)?1:0;

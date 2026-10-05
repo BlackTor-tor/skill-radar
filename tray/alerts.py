@@ -68,7 +68,9 @@ def toast(title, msg, _capture=False, notify=None):
         if sys.platform == "win32":
             proc = subprocess.run(["powershell", "-NoProfile", "-Command",
                                    _win_toast_ps(t, m)],
-                                  timeout=10, capture_output=True)
+                                  timeout=10, capture_output=True,
+                                  # 捕获输出不会隐藏控制台；GUI 客户端必须禁止子进程开窗。
+                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000))
         elif sys.platform == "darwin":
             proc = subprocess.run(["osascript", "-e",
                                    f'display notification "{_applescript_quote(m)}"'

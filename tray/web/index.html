@@ -4,9 +4,17 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
+<script>try{if(localStorage.getItem('skillradar-sidebar-collapsed')==='true')document.documentElement.dataset.sidebarCollapsed='true';}catch{}</script>
 <title>SkillRadar · 技能守护</title>
+<script>
+// 在首帧绘制前恢复外观，存储不可用时仍可正常切换。
+try { document.documentElement.dataset.theme=localStorage.getItem('skill-radar-theme')==='dark'?'dark':'light'; }
+catch { document.documentElement.dataset.theme='light'; }
+document.querySelector('meta[name="color-scheme"]').content=document.documentElement.dataset.theme;
+</script>
 <style>
 :root {
+  color-scheme: light;
   --bg: oklch(0.969 0.006 250); --surface: oklch(1 0 0); --fg: oklch(0.28 0.046 255);
   --muted: oklch(0.49 0.028 255); --border: oklch(0.91 0.013 250); --accent: oklch(0.47 0.087 181);
   --accent-hover: oklch(0.39 0.078 181); --accent-soft: oklch(0.96 0.025 181);
@@ -19,6 +27,34 @@
   --body: 'Microsoft YaHei UI', 'PingFang SC', 'Segoe UI', sans-serif;
   --mono: 'Cascadia Code', Consolas, 'SFMono-Regular', monospace;
   --radius: 14px;
+  --on-accent: #fff; --switch-thumb: #fff; --switch-off: oklch(0.8 0.02 250); --switch-hover: oklch(0.69 0.026 250);
+  --button-bg: #edf4ff; --button-fg: #244870; --button-border: #b6cce8;
+  --button-hover: #dceafd; --button-hover-border: #92b2d9;
+  --ghost-bg: #f0f4f8; --ghost-border: #d4dce6;
+  --rescan-bg: #e5efff; --rescan-border: #adc7e9; --rescan-hover: #d0e2fc;
+  --review-bg: #daf4ed; --review-fg: #16584d; --review-border: #9dcdbf; --review-hover: #bee8dc;
+  --revoke-bg: #fff3d8; --revoke-fg: #76520b; --revoke-border: #e7c687;
+  --danger-button-bg: #fff0ed; --danger-button-border: #efbeb4;
+  --quarantine-bg: #ffe8e4; --quarantine-fg: #913628; --quarantine-border: #e4aca1; --quarantine-hover: #ffd5cd;
+  --disabled-bg: #eff1f4; --disabled-fg: #77808f; --disabled-border: #d9dde3;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #141b24; --surface: #1c2633; --fg: #e4ebf4; --muted: #acb9ca; --border: #354357;
+  --accent: #79d5c4; --accent-hover: #a2e6d9; --accent-soft: #203c3b; --on-accent: #102a26;
+  --nav-active: #2b3b50; --hover: #293749; --danger: #ffaba0; --danger-soft: #432e31;
+  --warning: #f2cc87; --warning-soft: #3b3428; --chart: #9eb8db; --overlay: #060b12a8;
+  --shadow: 0 2px 5px #00000012, 0 12px 30px #00000016;
+  --switch-off: #54647a; --switch-hover: #6a7d97;
+  --button-bg: #253a55; --button-fg: #c6dfff; --button-border: #52729a;
+  --button-hover: #304c70; --button-hover-border: #729acb;
+  --ghost-bg: #293749; --ghost-border: #4b5d74;
+  --rescan-bg: #263e5c; --rescan-border: #5c7da5; --rescan-hover: #315172;
+  --review-bg: #23493f; --review-fg: #b4f1df; --review-border: #4e8b79; --review-hover: #2c5c4e;
+  --revoke-bg: #4c3c20; --revoke-fg: #ffe0a1; --revoke-border: #917645;
+  --danger-button-bg: #482f32; --danger-button-border: #985d57;
+  --quarantine-bg: #4e3135; --quarantine-fg: #ffc6bc; --quarantine-border: #9c625b; --quarantine-hover: #603d40;
+  --disabled-bg: #283343; --disabled-fg: #9aa8bb; --disabled-border: #46546a;
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -42,11 +78,21 @@ h3 { font-size: 14px; font-weight: 600; }
 .muted, .sub, small { color: var(--muted); }
 .sub { margin-top: 7px; font-size: 13px; text-wrap: pretty; }
 .layout { height: 100dvh; display: grid; grid-template-columns: 184px minmax(0, 1fr); }
+.layout.sidebar-collapsed, html[data-sidebar-collapsed="true"] .layout { grid-template-columns: 72px minmax(0, 1fr); }
 .sidebar { display: flex; flex-direction: column; background: var(--surface); border-right: 1px solid var(--border); padding: 27px 14px 17px; min-height: 0; }
-.brand { display: flex; gap: 9px; align-items: center; padding: 0 8px; }
+.brand { display: flex; gap: 4px; align-items: center; padding: 0 8px; min-height: 34px; }
 .brand .icon { width: 28px; height: 28px; }
 .brand-icon { width: 34px; height: 34px; flex: 0 0 auto; }
 .brand-name { font-size: 20px; font-weight: 700; letter-spacing: -.7px; }
+.sidebar-toggle { margin-left: auto; width: 28px; height: 32px; flex: 0 0 28px; display: grid; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted); }
+.sidebar-toggle:hover { background: var(--hover); color: var(--fg); }
+.sidebar-toggle .icon { width: 17px; height: 17px; transition: transform 180ms ease; }
+.layout.sidebar-collapsed .sidebar-toggle .icon { transform: rotate(180deg); }
+.layout.sidebar-collapsed .brand { width: 72px; margin-left: -14px; justify-content: center; padding: 0; gap: 9px; }
+.layout.sidebar-collapsed .brand-name, .layout.sidebar-collapsed .brand-sub, .layout.sidebar-collapsed .nav-label, .layout.sidebar-collapsed .side-bottom, .layout.sidebar-collapsed .nav-btn > span:not(.nav-dot) { display: none; }
+.layout.sidebar-collapsed .nav-items { gap: 8px; }
+.layout.sidebar-collapsed .nav-btn { justify-content: center; padding: 0; }
+.layout.sidebar-collapsed .nav-btn .icon { width: 20px; height: 20px; }
 .brand-sub { padding: 7px 8px 0 45px; font-size: 11px; color: var(--muted); letter-spacing: 1px; }
 .nav-label { color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: 1px; padding: 37px 13px 12px; }
 .nav-items { display: grid; gap: 6px; }
@@ -65,8 +111,13 @@ h3 { font-size: 14px; font-weight: 600; }
 .topbar { border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 0 29px; }
 .breadcrumb { font-size: 12px; display: flex; align-items: center; gap: 11px; }
 .breadcrumb .icon { width: 13px; height: 13px; color: var(--muted); }
-.connection { display: flex; gap: 8px; align-items: center; font-size: 11px; color: var(--muted); flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
-#ui-language { padding: 0 12px; min-width: 94px; cursor: pointer; }
+.header-actions { display: flex; gap: 12px; align-items: center; flex: 0 0 auto; }
+.header-control { width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; background: var(--hover); color: var(--fg); display: grid; place-items: center; position: relative; }
+.header-control:hover, .header-control:focus-within { background: var(--nav-active); }
+.header-control .icon { width: 24px; height: 24px; pointer-events: none; }
+.header-control:has(select:focus-visible) { outline: 3px solid var(--accent); outline-offset: 3px; }
+#ui-language { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border-radius: 50%; }
+#ui-language option { background: var(--surface); color: var(--fg); }
 select:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 html[lang="en"] .brand-sub { letter-spacing: 0; padding-left: 8px; }
 html[lang="en"] .nav-label { letter-spacing: .3px; }
@@ -76,19 +127,27 @@ html[lang="en"] .lbl { line-height: 1.5; }
 body.drawer-open { overflow: hidden; }
 body.drawer-open #main-content { overflow: hidden; }
 main { overflow-y: auto; min-width: 0; padding: 25px 29px 24px; scrollbar-gutter: stable; }
-main section { display: none; max-width: 1190px; margin: 0 auto; }
-main section.active { display: block; }
+main > section { display: none; max-width: 1190px; margin: 0 auto; }
+main > section.active { display: block; }
 .page-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 19px; }
 .page-heading > div { min-width: 0; }
-.btn { min-height: 44px; padding: 0 15px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); font-size: 12px; font-weight: 600; white-space: nowrap; }
-.btn:hover { background: var(--hover); border-color: oklch(0.8 0.02 250); }
+.btn { min-height: 44px; padding: 0 15px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 8px; border: 1px solid var(--button-border); background: var(--button-bg); color:var(--button-fg); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.btn:hover { background: var(--button-hover); border-color: var(--button-hover-border); }
 .btn .icon { width: 16px; height: 16px; }
-.btn.primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
-.btn.ghost { background: transparent; border-color: transparent; }
+.btn.ghost { background: var(--ghost-bg); border-color: var(--ghost-border); }
 .btn.ghost:hover { background: var(--hover); border-color: var(--border); }
-.btn.danger { color: var(--danger); }
+.btn.danger { color: var(--danger); background:var(--danger-button-bg); border-color:var(--danger-button-border); }
 .btn.danger:hover { background: var(--danger-soft); border-color: var(--danger); }
+.btn[data-batch-action="rescan"], #btn-rescan, #btn-sec-rescan, #btn-refresh-usage, #btn-open-skill-location { background:var(--rescan-bg); color:var(--button-fg); border-color:var(--rescan-border); }
+.btn[data-batch-action="rescan"]:hover, #btn-open-skill-location:hover { background:var(--rescan-hover); }
+.btn[data-batch-action="review"], .btn[data-batch-action="trust"], #btn-copy-skill, #btn-copy-report { background:var(--review-bg); color:var(--review-fg); border-color:var(--review-border); }
+.btn[data-batch-action="review"]:hover, .btn[data-batch-action="trust"]:hover { background:var(--review-hover); }
+.btn[data-batch-action="revoke_trust"] { background:var(--revoke-bg); color:var(--revoke-fg); border-color:var(--revoke-border); }
+.btn[data-batch-action="quarantine"] { background:var(--quarantine-bg); color:var(--quarantine-fg); border-color:var(--quarantine-border); }
+.btn[data-batch-action="quarantine"]:hover { background:var(--quarantine-hover); }
+.btn:disabled { background:var(--disabled-bg); color:var(--disabled-fg); border-color:var(--disabled-border); opacity:.75; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); min-width: 0; }
 .guard-card { display: flex; align-items: center; gap: 19px; padding: 19px 22px; margin-bottom: 16px; }
 .guard-mark { width: 56px; height: 56px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; flex: 0 0 auto; }
@@ -158,7 +217,38 @@ tr:last-child td { border-bottom: 0; }
 .score.crit { color: var(--danger); }
 .advice { color: var(--muted); font-size: 11px; }
 .advice.crit { color: var(--danger); }
+.badge.healthy { color: var(--accent); background: var(--accent-soft); }
+.security-tabs { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 15px; flex-wrap:wrap; }
+.security-tabs [role="tablist"] { display:flex; gap:6px; }
+.security-tabs [aria-selected="true"] { background:var(--accent-soft); color:var(--accent); border-color:var(--accent); }
+.selection-line { display:flex; align-items:center; gap:9px; padding:9px 17px; border-top:1px solid var(--border); font-size:11px; color:var(--muted); min-height:44px; }
+.skill-check { display:flex; gap:11px; align-items:flex-start; }
+.skill-check > div { min-width:0; }
+.skill-select, #select-filtered { width:18px; height:18px; accent-color:var(--accent); cursor:pointer; flex:0 0 auto; margin-top:3px; }
+.selection-line #select-filtered { margin:0; }
+.batch-toolbar { padding:14px 17px; background:var(--accent-soft); border-top:1px solid var(--border); display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.batch-toolbar > strong { margin-right:auto; font-size:12px; }
+.batch-toolbar .batch-buttons { display:flex; gap:7px; flex-wrap:wrap; }
+.batch-toolbar .btn { padding:0 11px; }
+.batch-updated { display:block; color:var(--warning); font-size:10px; margin-top:4px; }
+.processing-actions { display:flex; flex-wrap:wrap; gap:7px; }
+.processing-actions .btn { flex:1 1 155px; white-space:normal; min-height:44px; padding:8px 11px; }
+.processing-list { display:grid; gap:11px; margin-top:18px; }
+.processing-item { padding:14px; border:1px solid var(--border); border-radius:10px; }
+.processing-item h3 { overflow-wrap:anywhere; margin-bottom:4px; }
+.processing-item .skill-path { margin-top:6px; }
+.processing-item .badge { margin-top:7px; }
+.processing-effect { padding:14px; background:var(--accent-soft); border-radius:9px; font-size:12px; line-height:1.8; }
+.processing-effect.warning { background:var(--warning-soft); }
+.processing-progress { margin-top:15px; }
+.processing-progress progress { width:100%; height:9px; accent-color:var(--accent); }
+.processing-progress > p { display:flex; justify-content:space-between; gap:8px; margin-bottom:7px; font-size:12px; }
+.quarantine-meta { margin-top:5px; font-size:10px; color:var(--muted); }
+.quarantine-actions { display:flex; flex-wrap:wrap; gap:7px; margin-top:13px; }
+.quarantine-actions .btn { white-space:normal; min-height:44px; padding:7px 11px; }
+@media(max-width:1000px) { .batch-toolbar > strong { flex-basis:100%; } .batch-toolbar .batch-buttons { width:100%; } }
 .usage-summary { padding: 21px 23px; display: grid; grid-template-columns: 1.35fr 1fr 1fr; gap: 19px; margin-bottom: 20px; }
+#usage-refresh-status { height: 20px; line-height: 20px; margin: -9px 0 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .usage-summary > div + div { border-left: 1px solid var(--border); padding-left: 22px; }
 .usage-summary .num { font-size: 27px; }
 .usage-list { padding: 2px 20px 20px; }
@@ -171,6 +261,73 @@ tr:last-child td { border-bottom: 0; }
 .usage-table { border-top: 1px solid var(--border); }
 .usage-table td { font-size: 11px; padding: 13px; }
 .usage-table th { padding: 10px 13px; }
+.usage-tabs { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:18px; }
+.usage-tabs .filter { min-height:36px; }
+.usage-summary .summary-note { display:block; margin-top:9px; color:var(--muted); font-size:11px; line-height:1.6; }
+.usage-coverage { margin:0 20px 18px; line-height:1.7; overflow-wrap:anywhere; }
+.usage-group + .usage-group { border-top:1px solid var(--border); }
+.usage-group-head { padding:17px 20px 10px; }
+.usage-group-head h3 { font-size:13px; }
+.usage-group-head p { margin-top:6px; }
+.usage-table td { vertical-align:top; overflow-wrap:anywhere; }
+.skill-file-time { color:var(--muted); font-size:10px; line-height:1.7; margin-top:4px; overflow-wrap:anywhere; }
+.usage-row-flags { display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; }
+.usage-active { padding-bottom:12px; }
+.usage-active > summary { padding:16px 20px; cursor:pointer; font-weight:600; }
+.path-badge { display:inline-block; color:#243247; font-size:10px; padding:2px 7px; border-radius:5px; margin-left:8px; font-weight:500; }
+.attention-help { margin:0; padding:0 17px 13px; }
+.usage-discovery { padding:17px 20px; margin-bottom:18px; }
+.usage-discovery > p { margin-top:8px; }
+.usage-discovery details { margin-top:12px; }
+.usage-discovery summary, .markdown-source summary { cursor:pointer; padding:10px 0; font-weight:600; }
+.usage-discovery #usage-log-details { margin-top:0; }
+.usage-discovery #usage-log-details > summary { padding:0; }
+#usage-scan-status { display:block; margin-top:5px; font-size:11px; font-weight:400; color:var(--muted); overflow-wrap:anywhere; }
+.report-card { margin-top:16px; padding-bottom:18px; }
+.report-card .card-head { flex-wrap:wrap; }
+.report-card select { max-width:100%; min-width:0; }
+#report-guidance { margin: 0 20px; }
+.report-conclusion { padding: 22px; background: var(--accent-soft); border: 1px solid var(--border); border-radius: 10px; }
+.report-conclusion h2 { font-size: 20px; margin-bottom: 8px; }
+.report-counts { display: flex; flex-wrap: wrap; gap: 12px 20px; padding: 16px 0; font-size: 11px; color: var(--muted); }
+.report-counts strong { font: 600 22px var(--display); color: var(--fg); margin-right: 4px; font-variant-numeric: tabular-nums; }
+.report-item-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.report-item-actions .btn { white-space: normal; padding: 8px 12px; }
+.report-group { margin-top: 22px; padding: 18px 0 0; border-top: 1px solid var(--border); }
+.report-group-heading { display: flex; align-items: center; gap: 10px; }
+.report-group > summary { cursor: pointer; font-size: 14px; font-weight: 600; }
+.report-group-help { margin: 7px 0 14px; }
+.report-empty { padding: 8px 0; }
+.report-item { padding: 18px; margin-top: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); }
+.report-item h4 { font-size: 14px; margin: 0 0 8px; overflow-wrap: anywhere; }
+.report-reason { line-height: 1.8; margin-bottom: 10px; overflow-wrap: anywhere; }
+.report-item .skill-path { margin-bottom: 14px; }
+.report-path-label { display: block; font-family: var(--body); margin-bottom: 4px; }
+.report-steps { margin-top: 12px; }
+.report-steps > summary { cursor: pointer; padding: 8px 0; font-size: 12px; font-weight: 600; }
+.report-steps ol, .report-tutorial ol, .report-tutorial ul { margin: 10px 0 0; padding-left: 22px; }
+.report-steps li, .report-tutorial li { margin: 9px 0; line-height: 1.8; overflow-wrap: anywhere; }
+.report-tutorial { padding: 22px; margin-top: 22px; border: 1px solid var(--border); border-radius: 10px; }
+.report-tutorial h3, .report-tutorial h4 { margin: 0 0 8px; }
+.report-tutorial h4 { margin-top: 22px; }
+.report-legacy { padding: 14px; border-radius: 8px; background: var(--warning-soft); margin-bottom: 16px; }
+.report-evidence { margin: 22px 20px 0; border-top: 1px solid var(--border); padding-top: 10px; }
+.report-evidence > summary { cursor: pointer; padding: 10px 0; font-weight: 600; }
+.report-group > .report-item:last-child { margin-bottom: 4px; }
+@media (max-width: 940px) { .report-conclusion, .report-tutorial { padding: 16px; } .report-item { padding: 14px; } }
+#report-meta, .report-actions, .report-preview, .report-card .markdown-source { margin:0 20px; }
+.report-actions { display:flex; flex-wrap:wrap; gap:8px; padding:12px 0; }
+.usage-discovery .report-actions { margin:0; }
+.markdown-body { overflow-wrap:anywhere; }
+.markdown-body h1 { font-size:23px; margin:12px 0; }
+.markdown-body h2 { margin:20px 0 8px; }
+.markdown-body h3 { margin:14px 0 6px; }
+.markdown-body p { margin:8px 0; }
+.markdown-body pre { padding:12px; background:var(--bg); white-space:pre-wrap; overflow-wrap:anywhere; font:11px/1.8 var(--mono); border-radius:7px; }
+.markdown-body code { font-family:var(--mono); font-size:11px; }
+.markdown-body blockquote { margin:10px 0; padding-left:12px; border-left:3px solid var(--border); color:var(--muted); }
+.markdown-source textarea { display:block; width:100%; min-height:180px; resize:vertical; white-space:pre-wrap; padding:12px; font:11px/1.8 var(--mono); border:1px solid var(--border); color:var(--fg); background:var(--bg); border-radius:7px; }
+.nav-items { grid-template-columns:1fr; }
 .usage-table .numeric { text-align: right; font-variant-numeric: tabular-nums; }
 .settings-stack { display: grid; gap: 18px; }
 .settings-card { padding: 0 21px; }
@@ -181,11 +338,11 @@ tr:last-child td { border-bottom: 0; }
 .settings-copy h3 { margin-bottom: 4px; }
 .settings-copy small { display: block; font-size: 11px; line-height: 1.8; text-wrap: pretty; }
 .switch { border: 0; padding: 0; background: transparent; width: 48px; height: 44px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 8px; position: relative; }
-.switch-track { width: 42px; height: 24px; border-radius: 14px; background: oklch(0.8 0.02 250); padding: 3px; transition: background 140ms; }
-.switch-track::after { content: ''; display: block; width: 18px; height: 18px; background: var(--surface); border-radius: 50%; box-shadow: 0 1px 3px oklch(0.25 0.025 255 / .15); transition: transform 140ms; }
+.switch-track { width: 42px; height: 24px; border-radius: 14px; background: var(--switch-off); padding: 3px; transition: background 140ms; }
+.switch-track::after { content: ''; display: block; width: 18px; height: 18px; background: var(--switch-thumb); border-radius: 50%; box-shadow: 0 1px 3px oklch(0.25 0.025 255 / .15); transition: transform 140ms; }
 .switch.on .switch-track { background: var(--accent); }
 .switch.on .switch-track::after { transform: translateX(18px); }
-.switch:hover .switch-track { background: oklch(0.69 0.026 250); }
+.switch:hover .switch-track { background: var(--switch-hover); }
 .switch.on:hover .switch-track { background: var(--accent-hover); }
 .root-row { display: flex; align-items: center; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--border); }
 .root-row > .icon { color: var(--muted); width: 18px; height: 18px; }
@@ -259,7 +416,7 @@ input::placeholder { color: var(--muted); opacity: 1; }
   .layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(0,1fr); }
   .sidebar { border-right: 0; border-bottom: 1px solid var(--border); padding: 13px; gap: 12px; }
   .brand-sub, .nav-label, .side-bottom { display: none; }
-  .nav-items { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 4px; }
+  .nav-items { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 4px; }
   .nav-btn { justify-content: center; padding: 0 5px; gap: 6px; font-size: 11px; }
   .nav-btn .icon { width: 16px; height: 16px; } .nav-dot { display: none !important; }
   .workspace { grid-template-rows: 45px minmax(0,1fr); } .topbar { padding: 0 15px; }
@@ -280,22 +437,23 @@ input::placeholder { color: var(--muted); opacity: 1; }
   .drawer-header, .drawer-content, .drawer-footer { padding-left: 19px; padding-right: 19px; }
   .card-head { padding-left: 14px; padding-right: 14px; } .event-description { gap: 3px; }
 }
+@media (max-width: 700px) { #btn-sidebar-toggle { display: none; } .layout.sidebar-collapsed, html[data-sidebar-collapsed="true"] .layout { grid-template-columns: 1fr; } .layout.sidebar-collapsed .sidebar, html[data-sidebar-collapsed="true"] .sidebar { padding: 13px; } .layout.sidebar-collapsed .brand, html[data-sidebar-collapsed="true"] .brand { width: auto; margin-left: 0; justify-content: flex-start; padding: 0 8px; gap: 9px; } .layout.sidebar-collapsed .brand-name, html[data-sidebar-collapsed="true"] .brand-name, .layout.sidebar-collapsed .brand-sub, html[data-sidebar-collapsed="true"] .brand-sub, .layout.sidebar-collapsed .nav-label, html[data-sidebar-collapsed="true"] .nav-label, .layout.sidebar-collapsed .side-bottom, html[data-sidebar-collapsed="true"] .side-bottom, .layout.sidebar-collapsed .nav-btn > span:not(.nav-dot), html[data-sidebar-collapsed="true"] .nav-btn > span:not(.nav-dot) { display: initial; } .layout.sidebar-collapsed .brand-sub, html[data-sidebar-collapsed="true"] .brand-sub, .layout.sidebar-collapsed .nav-label, html[data-sidebar-collapsed="true"] .nav-label, .layout.sidebar-collapsed .side-bottom, html[data-sidebar-collapsed="true"] .side-bottom { display: none; } .layout.sidebar-collapsed .nav-items, html[data-sidebar-collapsed="true"] .nav-items { gap: 4px; } .layout.sidebar-collapsed .nav-btn, html[data-sidebar-collapsed="true"] .nav-btn { justify-content: center; padding: 0 5px; } .layout.sidebar-collapsed .nav-btn .icon, html[data-sidebar-collapsed="true"] .nav-btn .icon { width: 16px; height: 16px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 </style>
 </head>
 <body>
 <!-- Lucide icons via Iconify, pinned acquisition 2026-10-04; ISC license: lucide-license.txt. -->
-<svg xmlns="http://www.w3.org/2000/svg" class="icon-sprite" aria-hidden="true"><defs><symbol id="icon-radar" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M19.07 4.93A10 10 0 0 0 6.99 3.34M4 6h.01M2.29 9.62a10 10 0 1 0 19.02-1.27"/><path d="M16.24 7.76a6 6 0 1 0-8.01 8.91M12 18h.01m5.98-6.34a6 6 0 0 1-2.22 5.01"/><circle cx="12" cy="12" r="2"/><path d="m13.41 10.59l5.66-5.66"/></g></symbol><symbol id="icon-layout-dashboard" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></g></symbol><symbol id="icon-shield-check" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12l2 2l4-4"/></g></symbol><symbol id="icon-chart-no-axes-combined" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 16v5m4-6.361V21m4-10.344V21m2-18l-8.646 8.646a.5.5 0 0 1-.708 0L9.354 8.354a.5.5 0 0 0-.707 0L2 15m2 3.463V21m4-6.344V21"/></symbol><symbol id="icon-settings-2" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M14 17H5M19 7h-9"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></g></symbol><symbol id="icon-folder" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol><symbol id="icon-arrow-up-right" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h10v10M7 17L17 7"/></symbol><symbol id="icon-chevron-right" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 18l6-6l-6-6"/></symbol><symbol id="icon-x" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 6L6 18M6 6l12 12"/></symbol><symbol id="icon-refresh-cw" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M3 12a9 9 0 0 1 9-9a9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5m5 4a9 9 0 0 1-9 9a9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></g></symbol><symbol id="icon-pause" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><rect width="5" height="18" x="14" y="3" rx="1"/><rect width="5" height="18" x="5" y="3" rx="1"/></g></symbol><symbol id="icon-play" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/></symbol><symbol id="icon-triangle-alert" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m21.73 18l-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3M12 9v4m0 4h.01"/></symbol><symbol id="icon-check" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 6L9 17l-5-5"/></symbol><symbol id="icon-file-code-2" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v4"/><path d="M14 2v4a2 2 0 0 0 2 2h4M5 12l-3 3l3 3m4 0l3-3l-3-3"/></g></symbol><symbol id="icon-search" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="m21 21l-4.34-4.34"/><circle cx="11" cy="11" r="8"/></g></symbol><symbol id="icon-plus" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14m-7-7v14"/></symbol><symbol id="icon-external-link" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 3h6v6m-11 5L21 3m-3 10v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol><symbol id="icon-circle-question-mark" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3m.08 4h.01"/></g></symbol></defs></svg>
+<svg xmlns="http://www.w3.org/2000/svg" class="icon-sprite" aria-hidden="true"><defs><symbol id="icon-radar" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M19.07 4.93A10 10 0 0 0 6.99 3.34M4 6h.01M2.29 9.62a10 10 0 1 0 19.02-1.27"/><path d="M16.24 7.76a6 6 0 1 0-8.01 8.91M12 18h.01m5.98-6.34a6 6 0 0 1-2.22 5.01"/><circle cx="12" cy="12" r="2"/><path d="m13.41 10.59l5.66-5.66"/></g></symbol><symbol id="icon-layout-dashboard" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></g></symbol><symbol id="icon-shield-check" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12l2 2l4-4"/></g></symbol><symbol id="icon-chart-no-axes-combined" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 16v5m4-6.361V21m4-10.344V21m2-18l-8.646 8.646a.5.5 0 0 1-.708 0L9.354 8.354a.5.5 0 0 0-.707 0L2 15m2 3.463V21m4-6.344V21"/></symbol><symbol id="icon-settings-2" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M14 17H5M19 7h-9"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></g></symbol><symbol id="icon-folder" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol><symbol id="icon-arrow-up-right" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h10v10M7 17L17 7"/></symbol><symbol id="icon-chevron-right" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 18l6-6l-6-6"/></symbol><symbol id="icon-x" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 6L6 18M6 6l12 12"/></symbol><symbol id="icon-refresh-cw" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M3 12a9 9 0 0 1 9-9a9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5m5 4a9 9 0 0 1-9 9a9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></g></symbol><symbol id="icon-pause" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><rect width="5" height="18" x="14" y="3" rx="1"/><rect width="5" height="18" x="5" y="3" rx="1"/></g></symbol><symbol id="icon-play" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/></symbol><symbol id="icon-triangle-alert" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m21.73 18l-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3M12 9v4m0 4h.01"/></symbol><symbol id="icon-check" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 6L9 17l-5-5"/></symbol><symbol id="icon-file-code-2" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v4"/><path d="M14 2v4a2 2 0 0 0 2 2h4M5 12l-3 3l3 3m4 0l3-3l-3-3"/></g></symbol><symbol id="icon-search" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="m21 21l-4.34-4.34"/><circle cx="11" cy="11" r="8"/></g></symbol><symbol id="icon-plus" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14m-7-7v14"/></symbol><symbol id="icon-external-link" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 3h6v6m-11 5L21 3m-3 10v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol><symbol id="icon-circle-question-mark" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3m.08 4h.01"/></g></symbol><symbol id="icon-translate" viewBox="0 0 24 24"><path fill="currentColor" d="m15.075 18.95l-.85 2.425q-.1.275-.35.45t-.55.175q-.5 0-.812-.413t-.113-.912l3.8-10.05q.125-.275.375-.45t.55-.175h.75q.3 0 .55.175t.375.45L22.6 20.7q.2.475-.1.888t-.8.412q-.325 0-.562-.175t-.363-.475l-.85-2.4zM9.05 13.975L4.7 18.3q-.275.275-.687.288T3.3 18.3q-.275-.275-.275-.7t.275-.7l4.35-4.35q-.875-.875-1.588-2T4.75 8h2.1q.5.975 1 1.7t1.2 1.45q.825-.825 1.713-2.313T12.1 6H2q-.425 0-.712-.288T1 5t.288-.712T2 4h6V3q0-.425.288-.712T9 2t.713.288T10 3v1h6q.425 0 .713.288T17 5t-.288.713T16 6h-1.9q-.525 1.8-1.575 3.7t-2.075 2.9l2.4 2.45l-.75 2.05zM15.7 17.2h3.6l-1.8-5.1z"/></symbol><symbol id="icon-dark-mode" viewBox="0 0 24 24"><path fill="currentColor" d="M12 21q-3.75 0-6.375-2.625T3 12t2.625-6.375T12 3q.35 0 .688.025t.662.075q-1.025.725-1.638 1.888T11.1 7.5q0 2.25 1.575 3.825T16.5 12.9q1.375 0 2.525-.613T20.9 10.65q.05.325.075.662T21 12q0 3.75-2.625 6.375T12 21"/></symbol><symbol id="icon-light-mode" viewBox="0 0 24 24"><path fill="currentColor" d="M8.463 15.538Q7 14.075 7 12t1.463-3.537T12 7t3.538 1.463T17 12t-1.463 3.538T12 17t-3.537-1.463M5 13H1v-2h4zm18 0h-4v-2h4zM11 5V1h2v4zm0 18v-4h2v4zM6.4 7.75L3.875 5.325L5.3 3.85l2.4 2.5zm12.3 12.4l-2.425-2.525L17.6 16.25l2.525 2.425zM16.25 6.4l2.425-2.525L20.15 5.3l-2.5 2.4zM3.85 18.7l2.525-2.425L7.75 17.6l-2.425 2.525z"/></symbol></defs></svg>
 <div class="layout" id="app-layout" data-od-id="app-layout">
-  <nav class="sidebar" aria-label="主导航" data-i18n-aria-label="主导航" data-od-id="sidebar">
-    <div class="brand" data-od-id="brand"><img class="brand-icon" src="../assets/skillradar.png" alt=""><span class="brand-name">SkillRadar</span></div>
+  <nav class="sidebar" id="sidebar" aria-label="主导航" data-i18n-aria-label="主导航" data-od-id="sidebar">
+    <div class="brand" data-od-id="brand"><img class="brand-icon" src="../assets/skillradar.png" alt=""><span class="brand-name">SkillRadar</span><button type="button" id="btn-sidebar-toggle" class="sidebar-toggle" aria-expanded="true" aria-label="收起侧栏" title="收起侧栏"><svg class="icon" aria-hidden="true"><use href="#icon-chevron-right"/></svg></button></div>
     <p class="brand-sub"><span data-i18n="技能守护工作台">技能守护工作台</span></p>
     <p class="nav-label"><span data-i18n="工作区">工作区</span></p>
     <div class="nav-items">
-      <button type="button" class="nav-btn active" data-screen="overview" aria-current="page" data-od-id="nav-overview"><svg class="icon" aria-hidden="true"><use href="#icon-layout-dashboard"/></svg><span data-i18n="概览">概览</span><span class="nav-dot"></span></button>
-      <button type="button" class="nav-btn" data-screen="security" data-od-id="nav-security"><svg class="icon" aria-hidden="true"><use href="#icon-shield-check"/></svg><span data-i18n="安全检查">安全检查</span><span class="nav-dot"></span></button>
-      <button type="button" class="nav-btn" data-screen="usage" data-od-id="nav-usage"><svg class="icon" aria-hidden="true"><use href="#icon-chart-no-axes-combined"/></svg><span data-i18n="使用统计">使用统计</span><span class="nav-dot"></span></button>
-      <button type="button" class="nav-btn" data-screen="settings" data-od-id="nav-settings"><svg class="icon" aria-hidden="true"><use href="#icon-settings-2"/></svg><span data-i18n="设置">设置</span><span class="nav-dot"></span></button>
+      <button type="button" class="nav-btn active" data-screen="overview" aria-current="page" aria-label="概览" title="概览" data-i18n-aria-label="概览" data-i18n-title="概览" data-od-id="nav-overview"><svg class="icon" aria-hidden="true"><use href="#icon-layout-dashboard"/></svg><span data-i18n="概览">概览</span><span class="nav-dot"></span></button>
+      <button type="button" class="nav-btn" data-screen="security" aria-label="安全检查" title="安全检查" data-i18n-aria-label="安全检查" data-i18n-title="安全检查" data-screen="security" data-od-id="nav-security"><svg class="icon" aria-hidden="true"><use href="#icon-shield-check"/></svg><span data-i18n="安全检查">安全检查</span><span class="nav-dot"></span></button>
+      <button type="button" class="nav-btn" data-screen="usage" aria-label="使用统计" title="使用统计" data-i18n-aria-label="使用统计" data-i18n-title="使用统计" data-od-id="nav-usage"><svg class="icon" aria-hidden="true"><use href="#icon-chart-no-axes-combined"/></svg><span data-i18n="使用统计">使用统计</span><span class="nav-dot"></span></button>
+      <button type="button" class="nav-btn" data-screen="settings" aria-label="设置" title="设置" data-i18n-aria-label="设置" data-i18n-title="设置" data-od-id="nav-settings"><svg class="icon" aria-hidden="true"><use href="#icon-settings-2"/></svg><span data-i18n="设置">设置</span><span class="nav-dot"></span></button>
     </div>
     <div class="side-bottom" data-od-id="sidebar-status">
       <p class="side-status"><span class="status-dot" id="sidebar-dot"></span><span id="sidebar-status"><span data-i18n="正在连接客户端">正在连接客户端</span></span></p>
@@ -306,7 +464,10 @@ input::placeholder { color: var(--muted); opacity: 1; }
   <div class="workspace">
     <header class="topbar" data-od-id="topbar">
       <div class="breadcrumb"><span class="muted"><span data-i18n="工作区">工作区</span></span><svg class="icon" aria-hidden="true"><use href="#icon-chevron-right"/></svg><span id="breadcrumb-current"><span data-i18n="概览">概览</span></span></div>
-      <div class="connection"><label for="ui-language" data-i18n="界面语言">界面语言</label><select id="ui-language" class="btn" aria-label="界面语言" data-i18n-aria-label="界面语言"><option value="zh-CN">中文</option><option value="en">English</option></select><span id="environment-label"><span data-i18n="本机工作区">本机工作区</span></span><span>·</span><span id="sync-time" role="status"><span data-i18n="等待连接">等待连接</span></span></div>
+      <div class="header-actions">
+        <button type="button" id="btn-theme" class="header-control" aria-label="切换到深色外观" title="切换到深色外观" data-od-id="toggle-appearance"><svg class="icon" aria-hidden="true"><use href="#icon-dark-mode"/></svg></button>
+        <div class="header-control" data-od-id="language-control"><svg class="icon" aria-hidden="true"><use href="#icon-translate"/></svg><select id="ui-language" aria-label="界面语言" data-i18n-aria-label="界面语言"><option value="zh-CN" lang="zh-CN">中文</option><option value="en" lang="en">English</option></select></div>
+      </div>
     </header>
     <main id="main-content" tabindex="-1" data-od-id="main-content">
       <div id="connection-error" class="connection-error" role="alert" hidden data-od-id="connection-error">
@@ -338,10 +499,12 @@ input::placeholder { color: var(--muted); opacity: 1; }
         <p class="screen-note note"><svg class="icon" aria-hidden="true"><use href="#icon-circle-question-mark"/></svg><span><span data-i18n="风险分用于辅助判断；内容有变化不等于有恶意。请打开详情，结合来源、文件位置与代码确认。">风险分用于辅助判断；内容有变化不等于有恶意。请打开详情，结合来源、文件位置与代码确认。</span></span></p>
       </section>
       <section id="screen-usage" aria-labelledby="usage-title" data-od-id="screen-usage">
-        <div class="page-heading"><div><h1 id="usage-title" data-od-id="usage-title"><span data-i18n="使用统计">使用统计</span></h1><p class="sub"><span data-i18n="查看已记录的技能调用与来源。">查看已记录的技能调用与来源。</span></p></div><button type="button" class="btn" id="btn-refresh-usage" data-od-id="refresh-usage"><svg class="icon" aria-hidden="true"><use href="#icon-refresh-cw"/></svg><span data-i18n="刷新记录">刷新记录</span></button></div>
+        <div class="page-heading"><div><h1 id="usage-title" data-od-id="usage-title"><span data-i18n="使用统计">使用统计</span></h1><p class="sub"><span data-i18n="查看已安装技能的闲置情况与调用记录。">查看已安装技能的闲置情况与调用记录。</span></p></div><button type="button" class="btn" id="btn-refresh-usage" data-od-id="refresh-usage"><svg class="icon" aria-hidden="true"><use href="#icon-refresh-cw"/></svg><span data-i18n="刷新记录">刷新记录</span></button></div>
+        <p class="note" id="usage-refresh-status" role="status"></p>
         <div id="usage-bars" data-od-id="usage-summary"></div>
-        <div class="card" data-od-id="usage-ranking"><div class="card-head"><h2 data-od-id="usage-ranking-title"><span data-i18n="技能调用排行">技能调用排行</span></h2><span class="meta"><span data-i18n="按已记录的调用次数排序">按已记录的调用次数排序</span></span></div><div id="usage-detail"><div class="state-message"><strong><span data-i18n="正在读取调用记录">正在读取调用记录</span></strong><p><span data-i18n="请稍候。">请稍候。</span></p></div></div></div>
-        <p class="screen-note note"><svg class="icon" aria-hidden="true"><use href="#icon-circle-question-mark"/></svg><span><span data-i18n="仅展示调用记录中的前 25 项。合计为这些技能的记录之和，不含未被记录的调用；扫描事件不计入调用次数。">仅展示调用记录中的前 25 项。合计为这些技能的记录之和，不含未被记录的调用；扫描事件不计入调用次数。</span></span></p>
+        <div class="usage-tabs" role="group" aria-label="使用统计视图" data-i18n-aria-label="使用统计视图"><button type="button" class="filter active" data-usage-view="idle" aria-pressed="true"><span data-i18n="闲置技能">闲置技能</span></button><button type="button" class="filter" data-usage-view="ranking" aria-pressed="false"><span data-i18n="调用排行">调用排行</span></button></div>
+        <div class="card" data-od-id="usage-ranking"><div class="card-head"><h2 id="usage-view-title" data-od-id="usage-ranking-title"></h2><span class="meta" id="usage-view-description"></span></div><p class="note usage-coverage" id="usage-coverage" role="status"></p><div id="usage-detail"><div class="state-message"><strong><span data-i18n="正在读取调用记录">正在读取调用记录</span></strong><p><span data-i18n="请稍候。">请稍候。</span></p></div></div></div>
+        <p class="screen-note note"><svg class="icon" aria-hidden="true"><use href="#icon-circle-question-mark"/></svg><span><span data-i18n="闲置统计覆盖已登记文件夹中的完整技能清单；调用排行展示全部历史记录，可能含已移除技能。同名技能共用调用记录；文件检查不计入调用次数。">闲置统计覆盖已登记文件夹中的完整技能清单；调用排行展示全部历史记录，可能含已移除技能。同名技能共用调用记录；文件检查不计入调用次数。</span></span></p>
       </section>
       <section id="screen-settings" aria-labelledby="settings-title" data-od-id="screen-settings">
         <div class="page-heading"><div><h1 id="settings-title" data-od-id="settings-title"><span data-i18n="设置">设置</span></h1><p class="sub"><span data-i18n="管理守护方式、技能文件夹与本机数据。">管理守护方式、技能文件夹与本机数据。</span></p></div><span class="muted" style="font-size:11px"><span data-i18n="更改后自动保存">更改后自动保存</span></span></div>
@@ -367,6 +530,9 @@ input::placeholder { color: var(--muted); opacity: 1; }
 </aside>
 <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true" data-od-id="toast"></div>
 <script src="i18n.js"></script>
+<script src="processing.js"></script>
+<script src="markdown.js"></script>
+<script src="features.js"></script>
 <script>
 /* 真实客户端：仅调用 pywebview.api.get_state() 与 act(name, payload)。
    本文件没有模拟回退、网络请求、配置写入或客户端启动逻辑。 */
@@ -388,11 +554,17 @@ function errorText(result) {
 const kindStyles = () => ({new:[tr('新增技能'),'ok'],drift:[tr('内容有变化'),'warn'],block:[tr('高风险提醒'),'crit'],quarantine:[tr('隔离处理'),'crit'],error:[tr('处理失败'),'crit'],skip:[tr('已跳过'),'ok']});
 const statusViews = () => ({blocked:[tr('发现严重风险'),'crit'],drifted:[tr('内容有变化'),'warn'],'baseline-unreviewed':[tr('新技能待确认'),'warn'],scanned:[tr('已检查'),'ok'],rescanned:[tr('已重新检查'),'ok'],unscanned:[tr('尚未检查'),'warn'],trusted:[tr('已确认来源'),'ok'],accepted:[tr('已确认变化'),'ok'],reviewed:[tr('已确认'),'ok']});
 let CURRENT = null, CONNECTED = false, POLL_BUSY = false, POLL_AGAIN = false, ACTIVE_SCREEN = 'overview', FILTER = 'all';
-let USAGE_ROWS = null, USAGE_PHASE = 'idle', USAGE_ERROR = '';
+let SIDEBAR_COLLAPSED = document.documentElement.dataset.sidebarCollapsed==='true';
+let USAGE_ROWS = null, USAGE_PHASE = 'idle', USAGE_ERROR = '', USAGE_STATUS = {}, USAGE_BUSY = false;
+let USAGE_FOREGROUND_BUSY = false, USAGE_FORCE_PENDING = false;
+let USAGE_INSTALLED=null, USAGE_GROUPS=null, USAGE_SUMMARY=null, USAGE_VIEW='idle';
 let DRAWER_SKILL = null, DRAWER_NOTE = '', DRAWER_OPENER = null, DRAWER_TOKEN = 0, DRAWER_BUSY = false, DIFF_OUTPUT = null;
 let TOAST_T = null;
 let LANGUAGE_BUSY=false, LANGUAGE_REV=0, CONNECTION_ERROR='', DRAWER_ACTION_STATUS=null;
+let THEME_BUSY=false, THEME_REV=0;
 const PENDING = new Set(), HTML_CACHE = new Map(), SW = {block:false,quarantine:false}, SW_BUSY = {block:false,quarantine:false};
+const PROCESSING=window.SkillRadarProcessing({getState:()=>CURRENT,connected:()=>CONNECTED,act:(name,payload)=>act(name,payload),tick:()=>tick(),redraw:()=>renderSecurity(),openPanel:opener=>openDrawerPanel(opener),closePanel:()=>closeDrawer(),tr,escapeHtml,icon,number,updateHTML,toast,scanIssueText});
+const CLIENT_FEATURES=window.SkillRadarFeatures({tr,escapeHtml,act,toast,updateHTML,connected:()=>CONNECTED,getState:()=>CURRENT,getUsageStatus:()=>Object.keys(USAGE_STATUS).length?USAGE_STATUS:CURRENT?.usage_status,currentSkill:()=>DRAWER_SKILL,loadUsage:refresh=>loadUsage(refresh),openReportSkill:(path,opener)=>openDrawer(path,'',opener),reportAttention:()=>{switchScreen('security');$('skill-search').value='';$('skill-search').dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('[data-filter="attention"]').click();},reportUsage:()=>{switchScreen('usage');document.querySelector('[data-usage-view="idle"]').click();}});
 async function api() { if (!window.pywebview?.api) throw new Error('bridge unavailable'); return window.pywebview.api; }
 async function act(name, payload = {}) { try { return await (await api()).act(name,payload); } catch(e) { return {error:e?.message || String(e)}; } }
 function toast(message, failed=false) { $('toast').textContent=message; $('toast').classList.toggle('error',failed); $('toast').classList.add('show'); clearTimeout(TOAST_T); TOAST_T=setTimeout(()=>$('toast').classList.remove('show'),failed ? 6000 : 3500); }
@@ -413,22 +585,51 @@ function eventSkill(ev) {
   const name=skillFromEvent(ev), matches=Object.keys(skills).filter(p=>skills[p]?.name===name); return matches.length===1?matches[0]:null;
 }
 function eventNoteMap(st) { const map=new Map(); for(const ev of st.events || []) { const name=skillFromEvent(ev); if(name && !map.has(name)) map.set(name,ev.text || ''); } return map; }
-function critical(row) { return (row?.findings || []).some(f=>f.severity==='CRITICAL'); }
-function attention(row) { return critical(row) || ['blocked','drifted','baseline-unreviewed'].includes(row?.status) || count(row?.score)>=25 || (row?.findings || []).length>0; }
-function statusBadge(row) { const v=statusViews()[row?.status] || [tr('状态待确认'),'warn']; return '<span class="badge '+v[1]+'">'+v[0]+'</span>'; }
+function rowFindings(row) { return Array.isArray(row?.raw_findings)?row.raw_findings:row?.findings || []; }
+function rowScore(row) { return row?.raw_score ?? row?.score; }
+function critical(row) { return rowFindings(row).some(f=>f.severity==='CRITICAL'); }
+function attention(row) { return row?.check_status ? row.check_status!=='healthy' || row.review_status==='pending' : critical(row) || ['blocked','drifted','baseline-unreviewed'].includes(row?.status) || count(rowScore(row))>=25 || rowFindings(row).length>0; }
+function pathBadge(row,path) {
+  const peers=Object.entries(CURRENT?.skills || {}).filter(([p,r])=>(r.name || basename(p))===(row.name || basename(path))).map(([p])=>p).sort();
+  if(peers.length<2)return '';
+  const index=peers.indexOf(path), colors=['#dbeafe','#ede9fe','#fce7f3','#ccfbf1','#ffedd5','#e0f2fe'];
+  return '<span class="path-badge" data-path-color="'+escapeHtml(path)+'" style="background:'+colors[index%colors.length]+'" title="'+escapeHtml(path)+'">'+escapeHtml(tr('位置','Location')+' '+(index+1))+'</span>';
+}
+function statusBadge(row) {
+  if(row?.check_status) {
+    const checks={healthy:[tr('检查正常'),'healthy'],attention:[critical(row)?tr('严重风险'):tr('发现风险提示'),critical(row)?'crit':'warn'],incomplete:[tr('检查未完成'),'warn'],error:[tr('检查失败'),'crit']};
+    const v=checks[row.check_status] || [tr('尚未检查'),'warn'];
+    if(row.review_status==='trusted' && row.scan_complete===true && !row.scan_issues?.length && ['healthy','attention'].includes(row.check_status)) {
+      const labels={CRITICAL:tr('严重风险'),HIGH:tr('高风险'),MEDIUM:tr('中等风险'),LOW:tr('低风险'),INFO:tr('提示')};
+      const severity=Object.keys(labels).find(level=>rowFindings(row).some(f=>f.severity===level));
+      const risk=severity?labels[severity]:row.check_status==='healthy'?tr('未发现已知风险'):tr('发现风险提示');
+      return '<span class="badge '+v[1]+'">'+escapeHtml(tr('已信任','Trusted')+'（'+risk+'）')+'</span>';
+    }
+    const review={pending:tr('待处理'),reviewed:tr('已查看')};
+    return '<span class="badge '+v[1]+'">'+escapeHtml(v[0])+'</span>'+(review[row.review_status]?'<div style="margin-top:5px"><span class="badge">'+escapeHtml(review[row.review_status])+'</span></div>':'');
+  }
+  const v=statusViews()[row?.status] || [tr('状态待确认'),'warn']; return '<span class="badge '+v[1]+'">'+v[0]+'</span>';
+}
 function adviceFor(row) {
+  if(row.check_status==='incomplete' || row.check_status==='error') return tr('重新检查');
+  if(row.review_status==='trusted' && row.scan_complete===true && !row.scan_issues?.length) return tr('已信任；保留原始检查详情','Trusted; original findings retained');
+  if(row.check_status==='healthy') return tr('未发现已知风险');
   if(critical(row) || row.status==='blocked') return tr('暂勿使用');
   if(row.status==='drifted') return tr('核对内容变化'); if(row.status==='baseline-unreviewed') return tr('确认来源与内容');
-  if(count(row.score)>=40) return tr('暂勿使用'); if(count(row.score)>=25 || (row.findings || []).length) return tr('检查风险详情');
+  if(count(rowScore(row))>=40) return tr('暂勿使用'); if(count(rowScore(row))>=25 || rowFindings(row).length) return tr('检查风险详情');
   return tr('使用前核对来源');
 }
 function evRow(ev,index) {
   const path=eventSkill(ev), kind=kindStyles()[ev.kind] || [tr('其他事件'),'ok'], ts=String(ev.ts || ''), parts=ts.split(/[ T]/);
   const attrs=path?' class="rowlink" tabindex="0" data-skill="'+escapeHtml(path)+'" data-note="'+escapeHtml(ev.text || '')+'" aria-label="'+escapeHtml(tr('查看')+(CURRENT.skills[path]?.name || basename(path))+tr('的检查详情'))+'"':'';
-  return '<tr data-od-id="event-row-'+index+'"'+attrs+'><td class="event-time">'+escapeHtml(parts[1] || ts || tr('时间未记录'))+(parts[1]?'<small>'+escapeHtml(parts[0])+'</small>':'')+'</td><td><span class="badge '+kind[1]+'">'+kind[0]+'</span></td><td><div class="event-description"><span>'+escapeHtml(I18N.eventText(ev))+'</span>'+(path?icon('chevron-right'):'')+'</div></td></tr>';
+  return '<tr data-od-id="event-row-'+index+'"'+attrs+'><td class="event-time">'+escapeHtml(parts[1] || ts || tr('时间未记录'))+(parts[1]?'<small>'+escapeHtml(parts[0])+'</small>':'')+'</td><td><span class="badge '+kind[1]+'">'+kind[0]+'</span></td><td><div class="event-description"><span class="markdown-body">'+window.SkillRadarMarkdown.inline(I18N.eventText(ev))+'</span>'+(path?icon('chevron-right'):'')+'</div></td></tr>';
 }
 function secRow(row,path,note,index) {
-  return '<tr class="rowlink" tabindex="0" data-od-id="skill-row-'+index+'" data-skill="'+escapeHtml(path)+'" data-note="'+escapeHtml(note || '')+'" aria-label="'+escapeHtml(tr('查看')+(row.name || basename(path))+tr('的检查详情'))+'"><td><p class="skill-name">'+escapeHtml(row.name || basename(path))+'</p><p class="skill-path">'+escapeHtml(path)+'</p></td><td><span class="score '+(critical(row)?'crit':'')+'">'+escapeHtml(number(row.score))+'</span></td><td>'+statusBadge(row)+(critical(row)?uiMarkup('<div style="margin-top:5px"><span class="badge crit">严重风险</span></div>'):'')+'</td><td><div class="event-description"><span class="advice '+(critical(row)?'crit':'')+'">'+escapeHtml(adviceFor(row))+'</span>'+icon('chevron-right')+'</div></td></tr>';
+  return '<tr class="rowlink" tabindex="0" data-od-id="skill-row-'+index+'" data-skill="'+escapeHtml(path)+'" data-note="'+escapeHtml(note || '')+'" aria-label="'+escapeHtml(tr('查看')+(row.name || basename(path))+tr('的检查详情'))+'"><td><div class="skill-check">'+PROCESSING.checkbox(path,row)+'<div><p class="skill-name">'+escapeHtml(row.name || basename(path))+pathBadge(row,path)+'</p><p class="skill-path">'+escapeHtml(path)+'</p>'+skillFileTimes(row)+PROCESSING.updated(path,row)+'</div></div></td><td><span class="score '+(critical(row)?'crit':'')+'">'+escapeHtml(number(rowScore(row)))+'</span></td><td>'+statusBadge(row)+(!row.check_status && critical(row)?uiMarkup('<div style="margin-top:5px"><span class="badge crit">严重风险</span></div>'):'')+'</td><td><div class="event-description"><span class="advice '+(critical(row)?'crit':'')+'">'+escapeHtml(adviceFor(row))+'</span>'+icon('chevron-right')+'</div></td></tr>';
+}
+function skillFileTimes(row) {
+  const hint=tr('安装时间取自 SKILL.md 的文件创建时间，复制、恢复或重建可能改变它；更新时间取自文件修改时间。');
+  return '<p class="skill-file-time" title="'+escapeHtml(hint)+'">'+escapeHtml(tr('安装时间（估算）')+' · '+(row.installed_at?I18N.formatDateTime(row.installed_at):tr('未知')))+'</p><p class="skill-file-time">'+escapeHtml(tr('更新时间')+' · '+(row.updated_at?I18N.formatDateTime(row.updated_at):tr('未知')))+'</p>';
 }
 function updateHTML(id,html) {
   const target=$(id); if(HTML_CACHE.get(id)===html) return; HTML_CACHE.set(id,html);
@@ -439,9 +640,10 @@ function updateHTML(id,html) {
 function renderSecurity() {
   if(!CURRENT) return; const entries=Object.entries(CURRENT.skills || {}).filter(([,r])=>r && typeof r==='object');
   const note=eventNoteMap(CURRENT), query=$('skill-search').value.trim().toLowerCase();
-  const rows=entries.filter(([p,r])=>(FILTER!=='attention'||attention(r)) && (!query || ((r.name||'')+' '+p).toLowerCase().includes(query))).sort((a,b)=>Number(critical(b[1]))-Number(critical(a[1])) || Number(attention(b[1]))-Number(attention(a[1])) || count(b[1].score)-count(a[1].score));
+  const rows=entries.filter(([p,r])=>(FILTER!=='attention'||attention(r)) && (!query || ((r.name||'')+' '+p).toLowerCase().includes(query))).sort((a,b)=>Number(critical(b[1]))-Number(critical(a[1])) || Number(attention(b[1]))-Number(attention(a[1])) || count(rowScore(b[1]))-count(rowScore(a[1])));
   updateHTML('sec-rows',rows.length?rows.map(([p,r],i)=>secRow(r,p,note.get(r.name),i)).join(''):'<tr><td colspan="4">'+stateMessage(entries.length?tr('没有符合条件的技能'):tr('暂无检查记录'),entries.length?tr('换个关键词，或查看全部技能。'):tr('添加技能文件夹后，客户端会在文件变化时检查；也可点击重新检查。'),'shield-check')+'</td></tr>');
-  $('security-count').textContent=tr('显示 ')+rows.length+' / '+entries.length+tr(' 个技能 · 点击行查看完整检查详情');
+  $('security-count').textContent=(FILTER==='attention'?tr('需要关注','Needs attention')+' · ':'')+tr('显示 ')+rows.length+' / '+entries.length+tr(' 个技能 · 点击行查看完整检查详情');
+  PROCESSING.render(rows);
 }
 function renderGuard(st) {
   const paused=!!st.paused || st.guard==='paused', blocked=st.guard==='quarantine', alert=st.guard==='alert';
@@ -450,36 +652,53 @@ function renderGuard(st) {
   $('guard-card').className='card guard-card'+(paused?' paused':blocked?' danger':alert?' warn':'');
   $('ov-resume').hidden=!paused; $('btn-pause').hidden=paused;
   $('sidebar-status').textContent=paused?tr('守护已暂停'):blocked?tr('发现严重风险'):alert?tr('有待关注事项'):st.guard==='running'?tr('守护运行中'):tr('状态待确认');
+  const rows=Object.values(st.skills || {}).filter(r=>r && typeof r==='object');
+  if(!paused && rows.length && rows.every(row=>row.check_status)) {
+    const pending=rows.filter(row=>row.review_status==='pending' || ['incomplete','error'].includes(row.check_status));
+    const risks=rows.filter(row=>row.check_status==='attention');
+    const trusted=risks.filter(row=>row.review_status==='trusted');
+    if(!pending.length) {
+      $('guard-title').textContent=risks.length?tr('暂无待处理事项'):tr('检查正常');
+      $('guard-description').textContent=risks.length?tr('风险详情仍保留；已信任 ')+number(trusted.length)+tr(' 个技能，其他风险已查看。'):tr('已完成检查，未发现已知风险。文件有变化时会重新检查。');
+      $('guard-card').className='card guard-card'+(risks.length?' warn':'');
+      $('sidebar-status').textContent=risks.length?tr('暂无待处理事项'):tr('检查正常');
+    }
+  }
 }
-function render(st, syncLanguage=true) {
+function render(st, syncLanguage=true, syncTheme=true) {
   if(!st || typeof st!=='object' || Array.isArray(st)) return; CURRENT=st;
   if(syncLanguage && !LANGUAGE_BUSY && ['zh-CN','en'].includes(st.settings?.language) && st.settings.language!==I18N.language) {
-    I18N.set(st.settings.language); I18N.apply(); renderUsageDetail();
+    I18N.set(st.settings.language); I18N.apply(); paintHeaderControls(); renderUsageDetail();
     $('breadcrumb-current').textContent=screenTitle(ACTIVE_SCREEN);
   }
+  if(syncTheme && !THEME_BUSY && ['light','dark'].includes(st.settings?.theme) && st.settings.theme!==document.documentElement.dataset.theme) applyTheme(st.settings.theme);
   const c=todayCounters(st), rows=Object.values(st.skills || {}).filter(r=>r && typeof r==='object');
   renderGuard(st); initSettings(st);
   updateHTML('ov-tiles',metric(tr('技能文件夹'),st.watched_roots,'metric-folders','folder')+metric(tr('今日新增技能'),c.new,'metric-new')+metric(tr('今日内容有变化'),c.drift,'metric-changed')+metric(tr('今日高风险提醒'),c.block,'metric-blocked'));
   const events=Array.isArray(st.events)?st.events:[];
   updateHTML('ov-events',events.length?events.map(evRow).join(''):'<tr><td colspan="3">'+stateMessage(tr('暂无检查事件'),tr('文件有变化时会留下记录；也可以主动重新检查。'),'radar')+'</td></tr>');
   $('event-count').textContent=tr('最近 ')+events.length+tr(' 条');
-  updateHTML('sec-tiles',metric(tr('已记录技能'),rows.length,'metric-skills')+metric(tr('有严重风险'),rows.filter(critical).length,'metric-critical')+metric(tr('内容有变化'),rows.filter(r=>r.status==='drifted').length,'metric-drifted')+metric(tr('新技能待确认'),rows.filter(r=>r.status==='baseline-unreviewed').length,'metric-unreviewed'));
+  updateHTML('sec-tiles',metric(tr('已记录技能'),rows.length,'metric-skills')+metric(tr('有严重风险'),rows.filter(critical).length,'metric-critical')+metric(tr('内容有变化'),rows.filter(r=>r.status==='drifted').length,'metric-drifted')+metric(tr('待处理'),rows.filter(r=>r.review_status ? r.review_status==='pending' : r.status==='baseline-unreviewed').length,'metric-unreviewed'));
   renderSecurity(); paintAvailability();
-  if(DRAWER_SKILL && !DRAWER_BUSY) renderDrawer();
+  CLIENT_FEATURES.paint();
+  if(ACTIVE_SCREEN==='usage')loadUsage(true,false,true);
+  if((DRAWER_SKILL || PROCESSING.isPanel()) && !DRAWER_BUSY) renderDrawer();
 }
 function paintAvailability() {
   for(const id of ['btn-rescan','btn-sec-rescan','btn-pause','ov-resume','btn-open-data','btn-add-root']) $(id).disabled=!CONNECTED || PENDING.has(id) || (['btn-rescan','btn-sec-rescan'].includes(id)&&PENDING.has('rescan')) || (id==='btn-add-root'&&PENDING.has('roots'));
   for(const key of ['block','quarantine']) $('sw-'+key).disabled=!CONNECTED || SW_BUSY[key];
   for(const button of $('settings-roots').querySelectorAll('button')) button.disabled=!CONNECTED || PENDING.has('roots');
-  $('btn-refresh-usage').disabled=!CONNECTED || USAGE_PHASE==='loading';
+  $('btn-refresh-usage').disabled=!CONNECTED || USAGE_FOREGROUND_BUSY;
   $('btn-show-diff').disabled=!CONNECTED || DRAWER_BUSY || !CURRENT?.skills?.[DRAWER_SKILL];
   $('btn-accept').disabled=!CONNECTED || DRAWER_BUSY || CURRENT?.skills?.[DRAWER_SKILL]?.status!=='drifted' || critical(CURRENT?.skills?.[DRAWER_SKILL]);
+  PROCESSING.availability();
+  CLIENT_FEATURES.availability();
 }
 function setConnection(ok,error='') {
   CONNECTED=ok; CONNECTION_ERROR=error; $('sidebar-dot').classList.toggle('connected',ok); $('connection-error').hidden=ok;
-  if(ok) { $('sync-time').textContent=tr('已同步 ')+new Date().toLocaleTimeString(I18N.language,{hour:'2-digit',minute:'2-digit',hour12:false}); if(CURRENT)renderGuard(CURRENT); }
+  if(ok) { if(CURRENT)renderGuard(CURRENT); }
   else {
-    $('sidebar-status').textContent=CURRENT?tr('状态同步中断'):tr('未连接客户端'); $('sync-time').textContent=CURRENT?tr('显示上次记录'):tr('未连接');
+    $('sidebar-status').textContent=CURRENT?tr('状态同步中断'):tr('未连接客户端');
     $('connection-error-title').textContent=CURRENT?tr('状态同步失败'):tr('尚未连接 SkillRadar 客户端');
     $('connection-error-text').textContent=CURRENT?tr('保留上次读取的记录，当前守护状态未确认。正在重试。'):error==='bridge unavailable'?tr('请在 SkillRadar 桌面窗口中使用；本页面不会生成模拟检查结果。'):tr('暂时无法读取状态，正在重试。');
     if(!CURRENT) {
@@ -493,16 +712,24 @@ function setConnection(ok,error='') {
   } paintAvailability();
 }
 async function tick() {
-  if(POLL_BUSY) { POLL_AGAIN=true; return; } POLL_BUSY=true; const languageRev=LANGUAGE_REV, languageSyncAllowed=!LANGUAGE_BUSY;
-  try { const result=await (await api()).get_state(); if(!result || typeof result!=='object' || Array.isArray(result) || result.error) throw new Error('invalid state'); render(result,languageSyncAllowed && languageRev===LANGUAGE_REV && !LANGUAGE_BUSY); setConnection(true); }
+  if(POLL_BUSY) { POLL_AGAIN=true; return; } POLL_BUSY=true; const languageRev=LANGUAGE_REV, languageSyncAllowed=!LANGUAGE_BUSY, themeRev=THEME_REV, themeSyncAllowed=!THEME_BUSY;
+  try { const result=await (await api()).get_state(); if(!result || typeof result!=='object' || Array.isArray(result) || result.error) throw new Error('invalid state'); render(result,languageSyncAllowed && languageRev===LANGUAGE_REV && !LANGUAGE_BUSY,themeSyncAllowed && themeRev===THEME_REV && !THEME_BUSY); setConnection(true); }
   catch(e) { setConnection(false,e?.message || String(e)); }
   finally { POLL_BUSY=false; if(POLL_AGAIN) { POLL_AGAIN=false; tick(); } }
 }
 function paintSwitch(id,on) { $(id).classList.toggle('on',!!on); $(id).setAttribute('aria-checked',on?'true':'false'); }
-function screenTitle(name) { return {overview:tr('概览'),security:tr('安全检查'),usage:tr('使用统计'),settings:tr('设置')}[name]; }
+function screenTitle(name) { return {overview:tr('概览'),security:tr('安全检查'),usage:tr('使用统计'),reports:tr('检查报告','Check reports'),settings:tr('设置')}[name]; }
+function paintSidebar() {
+  const layout=$('app-layout'), button=$('btn-sidebar-toggle'); if(!layout||!button)return;
+  layout.classList.toggle('sidebar-collapsed',SIDEBAR_COLLAPSED);
+  button.setAttribute('aria-expanded',SIDEBAR_COLLAPSED?'false':'true');
+  const label=SIDEBAR_COLLAPSED?tr('展开侧栏','Expand sidebar'):tr('收起侧栏','Collapse sidebar');
+  button.setAttribute('aria-label',label);button.title=label;
+}
+function toggleSidebar() { SIDEBAR_COLLAPSED=!SIDEBAR_COLLAPSED;paintSidebar();try{localStorage.setItem('skillradar-sidebar-collapsed',SIDEBAR_COLLAPSED?'true':'false');}catch{} }
 function repaintLanguage() {
   const scroll=$('main-content').scrollTop, detailScroll=$('drawer-scroll').scrollTop;
-  I18N.apply(); HTML_CACHE.clear(); $('breadcrumb-current').textContent=screenTitle(ACTIVE_SCREEN);
+  I18N.apply(); paintHeaderControls(); paintSidebar(); HTML_CACHE.clear(); $('breadcrumb-current').textContent=screenTitle(ACTIVE_SCREEN);
   if(CURRENT) render(CURRENT,false);
   else {
     updateHTML('ov-tiles',[tr('技能文件夹'),tr('今日新增技能'),tr('今日内容有变化'),tr('今日高风险提醒')].map((label,i)=>metric(label,null,'overview-loading-'+i)).join(''));
@@ -526,6 +753,39 @@ async function changeLanguage(language) {
   } finally { LANGUAGE_BUSY=false; $('ui-language').removeAttribute('aria-busy'); $('ui-language').value=I18N.language; tick(); }
 }
 $('ui-language').addEventListener('change',e=>changeLanguage(e.target.value));
+function paintHeaderControls() {
+  const dark=document.documentElement.dataset.theme==='dark', button=$('btn-theme');
+  const label=dark?tr('切换到浅色外观','Switch to light appearance'):tr('切换到深色外观','Switch to dark appearance');
+  button.title=label; button.setAttribute('aria-label',label);
+  button.disabled=THEME_BUSY;
+  if(THEME_BUSY) button.setAttribute('aria-busy','true'); else button.removeAttribute('aria-busy');
+  button.querySelector('use').setAttribute('href',dark?'#icon-light-mode':'#icon-dark-mode');
+  $('ui-language').title=tr('切换语言','Switch language')+' · '+(I18N.language==='en'?'English':'中文');
+}
+function applyTheme(theme) {
+  document.documentElement.dataset.theme=theme;
+  document.querySelector('meta[name="color-scheme"]').content=theme;
+  try { localStorage.setItem('skill-radar-theme',theme); } catch {}
+  paintHeaderControls();
+}
+async function changeTheme() {
+  if(THEME_BUSY) return;
+  const button=$('btn-theme'), restoreFocus=document.activeElement===button;
+  const previous=document.documentElement.dataset.theme, theme=previous==='dark'?'light':'dark';
+  THEME_BUSY=true; ++THEME_REV; applyTheme(theme);
+  try {
+    if(!window.pywebview?.api) return;
+    // 桌面窗口采用私密存储，持久偏好交给客户端配置保存。
+    const result=await act('set_theme',{theme});
+    if(result?.ok) { if(CURRENT) CURRENT.settings={...CURRENT.settings,theme}; }
+    else { applyTheme(previous); toast(tr('外观保存失败：','Could not save appearance: ')+errorText(result),true); }
+  } finally {
+    THEME_BUSY=false; paintHeaderControls();
+    if(restoreFocus && document.activeElement===document.body) button.focus({preventScroll:true});
+    tick();
+  }
+}
+$('btn-theme').addEventListener('click',changeTheme);
 function initSettings(st) {
   const settings=st.settings || {}; for(const key of ['block','quarantine']) if(!SW_BUSY[key]) { SW[key]=!!settings[key]; paintSwitch('sw-'+key,SW[key]); }
   const roots=Array.isArray(settings.roots)?settings.roots.filter(r=>r && typeof r.path==='string'):[];
@@ -540,49 +800,128 @@ async function toggleSwitch(key,id,action,payloadKey,label) {
   finally { SW_BUSY[key]=false; paintAvailability(); tick(); }
 }
 function renderUsageDetail() {
-  const emptySummary='<div class="card usage-summary">'+[tr('已展示技能的调用合计'),tr('有调用记录的技能'),tr('最近记录日期')].map(label=>'<div><span class="lbl">'+label+'</span><div class="num">—</div></div>').join('')+'</div>';
+  const stale=USAGE_PHASE==='ready' && !!USAGE_ERROR;
+  $('usage-refresh-status').textContent=stale?tr('自动更新失败，保留上次记录；可点击刷新重试。','Automatic update failed. Showing previous records; use Refresh to retry.'):'';
+  $('usage-refresh-status').title=stale?errorText({error:USAGE_ERROR}):'';
+  document.querySelectorAll('[data-usage-view]').forEach(button=>{const active=button.dataset.usageView===USAGE_VIEW;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));});
+  $('usage-view-title').textContent=tr(USAGE_VIEW==='idle'?'闲置技能':'技能调用排行');
+  $('usage-view-description').textContent=tr(USAGE_VIEW==='idle'?'无调用记录与近 30 天未调用':'按最近记录时间排序');
+  $('usage-coverage').textContent='';
+  const emptySummary='<div class="card usage-summary">'+[tr('已安装技能'),tr('闲置技能'),tr('已安装技能调用合计')].map(label=>'<div><span class="lbl">'+escapeHtml(label)+'</span><div class="num">—</div></div>').join('')+'</div>';
   if(USAGE_PHASE==='loading' || USAGE_PHASE==='idle') { updateHTML('usage-bars',emptySummary); updateHTML('usage-detail',stateMessage(tr('正在读取调用记录'),tr('请稍候。'),'chart-no-axes-combined')); return; }
   if(USAGE_PHASE==='error') { updateHTML('usage-bars',emptySummary); updateHTML('usage-detail',stateMessage(tr('调用记录读取失败'),errorText({error:USAGE_ERROR}),'triangle-alert')); return; }
-  if(!USAGE_ROWS?.length) { updateHTML('usage-bars',emptySummary); updateHTML('usage-detail',stateMessage(tr('暂无调用记录'),tr('当前客户端未读取到记录。已有调用记录需要由本机的调用监测功能提供。'),'chart-no-axes-combined')); return; }
-  const rows=[...USAGE_ROWS].sort((a,b)=>count(b.total)-count(a.total)), total=rows.reduce((sum,r)=>sum+count(r.total),0), max=Math.max(1,...rows.map(r=>count(r.total))), dates=rows.map(r=>String(r.last||'')).filter(Boolean).sort();
-  updateHTML('usage-bars',uiMarkup('<div class="card usage-summary" data-od-id="usage-summary-card"><div><span class="lbl">已展示技能的调用合计</span><div class="num">')+escapeHtml(number(total))+uiMarkup('<small>次</small></div></div><div><span class="lbl">有调用记录的技能</span><div class="num">')+escapeHtml(number(rows.filter(r=>count(r.total)>0).length))+uiMarkup('<small>个</small></div></div><div><span class="lbl">最近记录日期</span><div class="num" style="font-size:19px;margin-top:12px">')+escapeHtml(dates.at(-1)||tr('未记录'))+'</div></div></div>');
+  if(USAGE_INSTALLED!==null && USAGE_SUMMARY) {
+    const summary=USAGE_SUMMARY, idle=count(summary.never)+count(summary.inactive), dates=USAGE_INSTALLED.map(r=>r.last).filter(Boolean).sort((a,b)=>new Date(a)-new Date(b));
+    updateHTML('usage-bars','<div class="card usage-summary" data-od-id="usage-summary-card"><div><span class="lbl">'+escapeHtml(tr('已安装技能'))+'</span><div class="num">'+escapeHtml(number(summary.total_installed))+'<small>'+tr('个')+'</small></div><small class="summary-note">'+escapeHtml(tr('记录不足')+' · '+number(summary.unknown))+'</small></div><div><span class="lbl">'+escapeHtml(tr('闲置技能'))+'</span><div class="num">'+escapeHtml(number(idle))+'<small>'+tr('个')+'</small></div><small class="summary-note">'+escapeHtml(tr('无调用记录')+' · '+number(summary.never)+' / '+tr('近 30 天未调用')+' · '+number(summary.inactive))+'</small></div><div><span class="lbl">'+escapeHtml(tr('已安装技能调用合计'))+'</span><div class="num">'+escapeHtml(number(summary.total_invocations))+'<small>'+tr('次')+'</small></div><small class="summary-note">'+escapeHtml(tr('最近记录日期')+' · '+(dates.length?I18N.formatDateTime(dates.at(-1)):tr('未记录')))+'</small></div></div>');
+    const covered=summary.coverage_complete===true;
+    $('usage-coverage').textContent=tr(covered?'“无调用记录”仅指已采集日志中未发现调用；同名副本按名称共用历史记录。':'记录不足：历史日志尚未完整读取，不能据此判断技能从未使用。')+(summary.coverage_note?' · '+I18N.usageCoverageText(summary.coverage_note):'')+(summary.inventory_complete===false?' · '+tr('技能清单不完整')+' · '+(summary.unavailable_inventory_roots || []).join(' · '):'');
+  } else {
+    updateHTML('usage-bars',emptySummary);
+    $('usage-coverage').textContent=tr('技能清单未提供，无法统计已安装技能的闲置情况；调用排行仍可查看。');
+  }
+  if(USAGE_VIEW==='idle') {
+    if(USAGE_INSTALLED===null) { updateHTML('usage-detail',stateMessage(tr('技能清单未提供'),tr('当前客户端未提供完整技能清单，请更新客户端；可切换到调用排行。'))); return; }
+    if(!USAGE_INSTALLED.length) { updateHTML('usage-detail',USAGE_SUMMARY?.inventory_complete===false?stateMessage(tr('技能清单不完整'),tr('部分技能文件夹无法读取，请核对位置后刷新。')+' '+(USAGE_SUMMARY.unavailable_inventory_roots || []).join(' · ')):stateMessage(tr('暂无已安装技能'),tr('添加包含技能的文件夹后，可在这里查看完整清单。'))); return; }
+    const groupRows=key=>Array.isArray(USAGE_GROUPS?.[key])?USAGE_GROUPS[key]:USAGE_INSTALLED.filter(row=>row.usage_state===key);
+    const definitions=[['never','无调用记录','已采集日志中没有发现调用记录。'],['inactive','近 30 天未调用','以前有调用记录，最后一次有效调用早于 30 天前。'],['unknown','记录不足','扫描未完成、来源缺失或调用时间未知的技能暂不归为闲置。']];
+    let output=definitions.map(([key,title,help])=>usageInventoryGroup(key,tr(title),tr(help),groupRows(key))).join('');
+    const active=USAGE_INSTALLED.filter(row=>row.usage_state==='active');
+    if(active.length)output+='<details class="usage-active"><summary>'+escapeHtml(tr('最近调用的技能')+' · '+number(active.length))+'</summary>'+usageInventoryTable(active)+'</details>';
+    updateHTML('usage-detail',output);return;
+  }
+  if(!USAGE_ROWS?.length) { updateHTML('usage-detail',stateMessage(tr(USAGE_STATUS.scanning?'正在后台扫描历史日志':'暂无调用记录',USAGE_STATUS.scanning?'Scanning history in the background':'No invocation records yet'),tr('请查看上方自动发现的日志路径与扫描结果。','Check the discovered log paths and scan results above.'),'chart-no-axes-combined')); return; }
+  const recentTime = value => { const time=Date.parse(String(value || '')); return Number.isFinite(time)?time:-Infinity; };
+  const rows=[...USAGE_ROWS].sort((a,b)=>recentTime(b.last)-recentTime(a.last) || count(b.total)-count(a.total) || String(a.name || '').localeCompare(String(b.name || ''))), max=Math.max(1,...rows.map(r=>count(r.total)));
   const bars=rows.slice(0,5).map((r,i)=>'<div class="usage-row" data-od-id="usage-bar-'+i+'"><span class="usage-rank">'+String(i+1).padStart(2,'0')+'</span><span class="usage-lbl">'+escapeHtml(r.name)+'</span><div class="bar" role="img" aria-label="'+escapeHtml(r.name+tr(' 已记录 ')+number(r.total)+tr(' 次调用'))+'"><span style="width:'+Math.max(0,Math.min(100,count(r.total)/max*100))+'%"></span></div><span class="usage-num">'+escapeHtml(number(r.total))+'</span></div>').join('');
-  const table=rows.map((r,i)=>'<tr data-od-id="usage-detail-row-'+i+'"><td>'+escapeHtml(r.name)+'</td><td class="numeric">'+escapeHtml(number(r.total))+'</td><td class="numeric">'+escapeHtml(number(r.zcode))+'</td><td class="numeric">'+escapeHtml(number(r.claude))+'</td><td class="numeric">'+escapeHtml(number(r.marker))+'</td><td>'+escapeHtml(r.last||tr('未记录'))+'</td></tr>').join('');
-  updateHTML('usage-detail','<div class="usage-list">'+bars+uiMarkup('</div><table class="usage-table" aria-label="各技能调用明细"><colgroup><col style="width:29%"><col style="width:11%"><col style="width:12%"><col style="width:12%"><col style="width:13%"><col style="width:23%"></colgroup><thead><tr><th scope="col">技能</th><th scope="col" class="numeric">合计</th><th scope="col" class="numeric">ZCode</th><th scope="col" class="numeric">Claude</th><th scope="col" class="numeric">会话标记</th><th scope="col">最近记录</th></tr></thead><tbody>')+table+'</tbody></table>');
+  const table=rows.map((r,i)=>'<tr data-od-id="usage-detail-row-'+i+'"><td>'+escapeHtml(r.name)+'</td><td class="numeric">'+escapeHtml(number(r.total))+'</td><td class="numeric">'+escapeHtml(number(r.zcode))+'</td><td class="numeric">'+escapeHtml(number(r.codex))+'</td><td class="numeric">'+escapeHtml(number(r.claude))+'</td><td class="numeric">'+escapeHtml(number(r.marker))+'</td><td>'+escapeHtml(I18N.formatDateTime(r.last)||tr('未记录'))+'</td></tr>').join('');
+  updateHTML('usage-detail','<div class="usage-list">'+bars+uiMarkup('</div><table class="usage-table" aria-label="各技能调用明细"><colgroup><col style="width:24%"><col style="width:9%"><col style="width:10%"><col style="width:10%"><col style="width:10%"><col style="width:12%"><col style="width:25%"></colgroup><thead><tr><th scope="col">技能</th><th scope="col" class="numeric">合计</th><th scope="col" class="numeric">ZCode</th><th scope="col" class="numeric">Codex</th><th scope="col" class="numeric">Claude</th><th scope="col" class="numeric">会话标记</th><th scope="col">最近记录</th></tr></thead><tbody>')+table+'</tbody></table>');
 }
-async function loadUsage() {
-  if(USAGE_PHASE==='loading') return; USAGE_PHASE='loading'; renderUsageDetail(); paintAvailability();
-  try { const result=await act('get_usage',{}); if(result?.ok && Array.isArray(result.rows)) { USAGE_ROWS=result.rows.filter(r=>r && typeof r==='object'); USAGE_PHASE='ready'; } else { USAGE_PHASE='error'; USAGE_ERROR=result?.error || result?.output || '客户端未返回成功结果'; } }
-  finally { renderUsageDetail(); paintAvailability(); }
+function usageInventoryGroup(key,title,help,rows) {
+  return '<div class="usage-group" id="usage-group-'+key+'"><div class="usage-group-head"><h3>'+escapeHtml(title)+' · '+escapeHtml(number(rows.length))+'</h3><p class="note">'+escapeHtml(help)+'</p></div>'+(rows.length?usageInventoryTable(rows):'<p class="note usage-coverage">'+escapeHtml(tr('暂无符合条件的技能'))+'</p>')+'</div>';
+}
+function usageInventoryTable(rows) {
+  const body=rows.map(row=>{
+    const flags=(row.observing?'<span class="badge" data-usage-observing title="'+escapeHtml(tr('估算安装时间在最近 30 天内，仍处于观察期。'))+'">'+escapeHtml(tr('观察中'))+'</span>':'')+(row.shared_name?'<span class="badge" data-usage-shared-name title="'+escapeHtml(tr('历史记录按技能名称合并，无法确认实际调用了哪个安装位置。'))+'">'+escapeHtml(tr('同名技能共用调用记录'))+'</span>':'');
+    return '<tr><td><p class="skill-name">'+escapeHtml(row.name)+'</p><p class="skill-path">'+escapeHtml(row.path)+'</p>'+(flags?'<div class="usage-row-flags">'+flags+'</div>':'')+'</td><td>'+escapeHtml(row.last?I18N.formatDateTime(row.last):tr('未记录'))+'</td><td>'+skillFileTimes(row)+'</td></tr>';
+  }).join('');
+  return uiMarkup('<table class="usage-table" aria-label="已安装技能明细"><colgroup><col style="width:42%"><col style="width:23%"><col style="width:35%"></colgroup><thead><tr><th scope="col">技能 / 文件位置</th><th scope="col">最近记录</th><th scope="col">文件时间</th></tr></thead><tbody>')+body+'</tbody></table>';
+}
+async function loadUsage(refresh=true,force=false,background=false) {
+  if(USAGE_BUSY) {
+    // 手动刷新在后台读取结束后执行一次，避免丢失点击或重叠请求。
+    if(force && !USAGE_FOREGROUND_BUSY) { USAGE_FORCE_PENDING=true; USAGE_FOREGROUND_BUSY=true; paintAvailability(); }
+    return;
+  }
+  USAGE_BUSY=true; USAGE_FOREGROUND_BUSY=!background || USAGE_PHASE!=='ready';
+  const keepContent=background && USAGE_PHASE==='ready';
+  // 自动轮询保留已显示的内容，避免占位态改变高度、滚动位置与展开状态。
+  if(!background || USAGE_PHASE!=='ready') { USAGE_PHASE='loading'; renderUsageDetail(); }
+  paintAvailability();
+  try { const result=await act('get_usage',{refresh,force}); if(result?.ok && Array.isArray(result.rows)) { USAGE_ROWS=result.rows.filter(r=>r && typeof r==='object'); USAGE_INSTALLED=Array.isArray(result.installed_rows)?result.installed_rows.filter(r=>r && typeof r==='object'):null;USAGE_GROUPS=result.idle_groups || null;USAGE_SUMMARY=result.inventory_summary || null;USAGE_STATUS=result.status || {}; USAGE_PHASE='ready'; USAGE_ERROR=''; } else { if(!keepContent) USAGE_PHASE='error'; USAGE_ERROR=result?.error || result?.output || '客户端未返回成功结果'; } }
+  finally {
+    USAGE_BUSY=false; USAGE_FOREGROUND_BUSY=false;
+    renderUsageDetail(); paintAvailability(); CLIENT_FEATURES.paint();
+    if(USAGE_FORCE_PENDING) { USAGE_FORCE_PENDING=false; void loadUsage(true,true); }
+  }
 }
 function drawerFocusable() { return [...$('drawer').querySelectorAll('button, input, a[href], [tabindex]')].filter(el=>!el.disabled && !el.hidden && !el.closest('[hidden]') && el.tabIndex>=0); }
+function scanIssueText(issue) {
+  const raw=String(issue || ''),split=raw.indexOf(':'),code=split<0?raw:raw.slice(0,split),path=split<0?'':raw.slice(split+1);
+  const labels={invalid_skill_directory:'技能文件夹无法确认',directory_unreadable:'无法读取文件夹',linked_directory:'链接文件夹未检查',linked_file:'链接文件未检查',unsupported_file:'该文件类型无法检查',hash_size_limit:'文件过大，无法完整核对',text_size_limit:'文件过大，无法完整检查内容',file_unreadable:'无法读取文件',read_failed:'无法读取文件',file_changed_during_capture:'文件在检查时发生变化',changed_during_scan:'文件在检查时发生变化',binary_not_text_checked:'图片等文件未进行文字检查',binary:'图片等文件未进行文字检查',decode_limit:'部分内容无法读取',scan_failed:'检查失败，请重新检查'};
+  if(code==='text_size_limit')return tr('文本超过本次完整检查大小上限；请拆分文件后重新检查。','Text exceeds the full-check size limit. Split the file and check again.')+(path?' · '+path:'');
+  if(code==='binary_not_text_checked')return tr('无法识别为普通素材的二进制文件，尚未检查内容。','Unrecognized binary file: its content has not been checked.')+(path?' · '+path:'');
+  if(code==='decode_limit')return tr('编码内容的去重解码候选或总字节超过本次检查上限。请核对下方文件和行号，拆分大型编码内容后再检查；相同内容反复重查不会消除限制。','Unique decoded content exceeds the candidate or byte budget. Review the file and line below; split large encoded content before checking again. Repeating the same check will not remove this limit.')+(path?' · '+path:'');
+  return tr(labels[code] || '部分内容未能完成检查')+(path?' · '+path:'');
+}
 function renderDrawer() {
+  if(PROCESSING.isPanel()) { PROCESSING.renderPanel(); return; }
   const row=CURRENT?.skills?.[DRAWER_SKILL];
   if(!row) { $('drawer-title').textContent=tr('检查记录已更新'); $('drawer-body').innerHTML=stateMessage(tr('该技能已不在当前记录中'),tr('关闭详情后刷新检查结果。'),'shield-check'); $('btn-accept').hidden=true; paintAvailability(); return; }
-  $('drawer-title').textContent=row.name || basename(DRAWER_SKILL); const findings=Array.isArray(row.findings)?row.findings:[];
-  const findingHTML=findings.length?findings.map((f,i)=>{
+  $('drawer-title').textContent=row.name || basename(DRAWER_SKILL); const findings=rowFindings(row);
+  let findingHTML=findings.length?findings.map((f,i)=>{
     const severity={CRITICAL:[tr('严重风险'),'crit'],HIGH:[tr('高风险'),'warn'],MEDIUM:[tr('中等风险'),'warn'],LOW:[tr('低风险'),'ok'],INFO:[tr('提示'),'ok']}[f.severity] || [tr('风险提示'),'warn'];
     const refs=Array.isArray(f.refs)?f.refs:[];
     const original=f.message && I18N.findingText(f)!==f.message?'<details class="note"><summary>'+escapeHtml(tr('原始说明'))+'</summary><p>'+escapeHtml(f.message)+'</p></details>':'';
     return '<article class="finding" data-od-id="finding-'+i+'"><div class="finding-top"><span class="badge '+severity[1]+'">'+severity[0]+'</span><span class="rule-id">'+escapeHtml(tr('出处：'))+escapeHtml(f.rule_id || tr('未提供编号'))+(refs.length?' · '+refs.map(escapeHtml).join(' · '):'')+'</span></div><p>'+escapeHtml(I18N.findingText(f))+'</p><div class="finding-location">'+icon('file-code-2')+'<span>'+escapeHtml(f.file || tr('文件位置未提供'))+(f.line!=null?tr(' · 第 ')+escapeHtml(f.line)+tr(' 行'):'')+'</span></div>'+original+(f.excerpt?'<pre class="diff-pre">'+escapeHtml(f.excerpt)+'</pre>':uiMarkup('<p class="note">该条检查未提供代码片段。</p>'))+'</article>';
   }).join(''):uiMarkup('<div class="detail-empty"><h3>未命中当前风险规则</h3><p>本次检查未命中已知规则，不代表绝对安全。请继续核对技能来源、文件内容和所需权限。</p></div>');
+  if(row.scan_complete===false || ['incomplete','error'].includes(row.check_status)) {
+    const issues=Array.isArray(row.scan_issues)?row.scan_issues:[];
+    const incomplete='<div class="detail-empty"><h3>'+escapeHtml(tr('未完成检查，无法判断'))+'</h3><p>'+escapeHtml(tr('部分内容尚未检查成功，请重新检查后再确认或信任。'))+'</p>'+issues.map(issue=>'<p style="margin-top:8px">'+escapeHtml(scanIssueText(issue))+'</p>').join('')+'</div>';
+    findingHTML=incomplete+(findings.length?findingHTML:'');
+  }
   const output=DIFF_OUTPUT!==null?uiMarkup('<div class="diff-section" data-od-id="content-diff"><h3>内容变更</h3><p class="note">文件位置与代码保留客户端原始输出。</p><pre class="diff-pre">')+escapeHtml(I18N.outputText(DIFF_OUTPUT))+'</pre></div>':'';
-  updateHTML('drawer-body','<div class="detail-summary">'+statusBadge(row)+uiMarkup('<span class="badge">风险分 ')+escapeHtml(number(row.score))+uiMarkup('</span></div><span class="detail-label">技能文件夹 · 完整位置</span><div class="detail-location">')+escapeHtml(DRAWER_SKILL)+'</div><p class="detail-reason">'+escapeHtml(row.reason ? I18N.reasonText(row.reason,row) : DRAWER_NOTE ? I18N.eventText({kind:row.status==='drifted'?'drift':'new',text:DRAWER_NOTE}) : tr('请根据下面的检查结果核对技能内容。'))+uiMarkup('</p><div class="findings-title"><h3>规则检查结果</h3><span class="muted" style="font-size:11px">')+findings.length+tr(' 项提示')+'</span></div>'+findingHTML+output);
+  updateHTML('drawer-body','<div class="detail-summary">'+statusBadge(row)+uiMarkup('<span class="badge">风险分 ')+escapeHtml(number(rowScore(row)))+uiMarkup('</span></div><span class="detail-label">技能文件夹 · 完整位置</span><div class="detail-location">')+escapeHtml(DRAWER_SKILL)+'</div><p class="detail-reason">'+escapeHtml(row.reason ? I18N.reasonText(row.reason,row) : DRAWER_NOTE ? I18N.eventText({kind:row.status==='drifted'?'drift':'new',text:DRAWER_NOTE}) : tr('请根据下面的检查结果核对技能内容。'))+uiMarkup('</p><div class="findings-title"><h3>规则检查结果</h3><span class="muted" style="font-size:11px">')+findings.length+tr(' 项提示')+'</span></div>'+findingHTML+output);
+  CLIENT_FEATURES.skillMarkdown(DRAWER_SKILL);
+  $('drawer-body').querySelectorAll('[data-check-meta]').forEach(node=>node.remove());
+  $('drawer-body').insertAdjacentHTML('afterbegin','<div data-check-meta>'+skillFileTimes(row)+'<p class="note">'+escapeHtml(tr('安装时间取自 SKILL.md 的文件创建时间，复制、恢复或重建可能改变它；更新时间取自文件修改时间。'))+'</p></div>');
+  if(row.scanned_at) $('drawer-body').insertAdjacentHTML('afterbegin','<p class="note" data-check-meta>'+escapeHtml(tr('检查时间','Checked at')+' · '+row.scanned_at)+'</p>');
+  if(row.scan_coverage?.asset_files_hashed) $('drawer-body').insertAdjacentHTML('beforeend','<p class="note" data-check-meta>'+escapeHtml(tr('附件仅核对文件哈希，不作文字检查：','Assets are hashed without text checks: ')+(row.scan_coverage.assets_without_text_check || []).join(', '))+'</p>');
   const changed=row.status==='drifted'; $('btn-accept').hidden=!changed;
   $('accept-help').textContent=changed?tr('确认会更新内容检查记录；不会忽略现有风险提示。'):tr('检查只覆盖当前规则；使用前仍需确认来源、内容与权限。');
+  PROCESSING.detail(DRAWER_SKILL,row);
   paintAvailability();
 }
 function openDrawer(skill,note='',opener=document.activeElement) {
   if(!Object.hasOwn(CURRENT?.skills || {},skill)) return;
+  PROCESSING.dismiss();
   DRAWER_SKILL=skill; DRAWER_NOTE=note; DRAWER_OPENER=opener; DRAWER_TOKEN++; DIFF_OUTPUT=null; DRAWER_ACTION_STATUS=null;
   $('drawer-status').hidden=true; renderDrawer(); $('drawer').hidden=false; $('drawer-backdrop').hidden=false;
   $('drawer').setAttribute('aria-hidden','false'); $('drawer').classList.add('open');
   document.body.classList.add('drawer-open');
   $('btn-close-drawer').focus({preventScroll:true}); $('app-layout').inert=true; $('app-layout').setAttribute('aria-hidden','true'); $('drawer-scroll').scrollTop=0;
 }
+function openDrawerPanel(opener=document.activeElement) {
+  const existingOpener=!$('drawer').hidden && DRAWER_OPENER;
+  DRAWER_SKILL=null; DRAWER_NOTE=''; DRAWER_OPENER=existingOpener || opener; DRAWER_TOKEN++;
+  $('drawer-status').hidden=true; $('drawer').hidden=false; $('drawer-backdrop').hidden=false;
+  $('drawer').setAttribute('aria-hidden','false'); $('drawer').classList.add('open');
+  document.body.classList.add('drawer-open'); $('btn-close-drawer').focus({preventScroll:true});
+  $('app-layout').inert=true; $('app-layout').setAttribute('aria-hidden','true'); $('drawer-scroll').scrollTop=0;
+}
 function closeDrawer() {
   if($('drawer').hidden) return; const skill=DRAWER_SKILL, opener=DRAWER_OPENER;
   DRAWER_SKILL=null; DRAWER_NOTE=''; DRAWER_TOKEN++; $('drawer').hidden=true; $('drawer-backdrop').hidden=true;
+  PROCESSING.dismiss();
   $('drawer').classList.remove('open'); $('drawer').setAttribute('aria-hidden','true'); $('app-layout').inert=false; $('app-layout').removeAttribute('aria-hidden');
   document.body.classList.remove('drawer-open');
   const replacement=[...$('screen-'+ACTIVE_SCREEN).querySelectorAll('[data-skill]')].find(el=>el.dataset.skill===skill);
@@ -617,17 +956,18 @@ async function runAction(name,button,label,payload={},key=button.id) {
   finally { PENDING.delete(key); PENDING.delete(button.id); button.innerHTML=old; I18N.apply(); button.removeAttribute('aria-busy'); paintAvailability(); }
 }
 function switchScreen(name) {
-  if(!['overview','security','usage','settings'].includes(name)) return; if(DRAWER_SKILL) closeDrawer(); ACTIVE_SCREEN=name;
+  if(!['overview','security','usage','reports','settings'].includes(name)) return; if(!$('drawer').hidden) closeDrawer(); ACTIVE_SCREEN=name;
   document.querySelectorAll('.nav-btn').forEach(b=>{ const active=b.dataset.screen===name; b.classList.toggle('active',active); if(active)b.setAttribute('aria-current','page'); else b.removeAttribute('aria-current'); });
-  document.querySelectorAll('main section').forEach(s=>s.classList.toggle('active',s.id==='screen-'+name));
+  document.querySelectorAll('main > section').forEach(s=>s.classList.toggle('active',s.id==='screen-'+name));
   $('breadcrumb-current').textContent=screenTitle(name); $('main-content').scrollTop=0;
-  try{localStorage.setItem('skillradar-screen',name);}catch{} if(name==='usage')loadUsage();
+  try{localStorage.setItem('skillradar-screen',name);}catch{} if(name==='usage')loadUsage(); if(name==='reports')CLIENT_FEATURES.loadReports();
 }
 function bindRowClicks(id) {
-  $(id).addEventListener('click',e=>{const row=e.target.closest('tr[data-skill]'); if(row)openDrawer(row.dataset.skill,row.dataset.note,row);});
-  $(id).addEventListener('keydown',e=>{const row=e.target.closest('tr[data-skill]'); if(row && (e.key==='Enter'||e.key===' ')) {e.preventDefault(); openDrawer(row.dataset.skill,row.dataset.note,row);}});
+  $(id).addEventListener('click',e=>{if(e.target.closest('input,label,button'))return;const row=e.target.closest('tr[data-skill]'); if(row)openDrawer(row.dataset.skill,row.dataset.note,row);});
+  $(id).addEventListener('keydown',e=>{if(e.target.closest('input,label,button'))return;const row=e.target.closest('tr[data-skill]'); if(row && (e.key==='Enter'||e.key===' ')) {e.preventDefault(); openDrawer(row.dataset.skill,row.dataset.note,row);}});
 }
 document.querySelectorAll('.nav-btn').forEach(button=>button.addEventListener('click',()=>switchScreen(button.dataset.screen)));
+if($('btn-sidebar-toggle'))$('btn-sidebar-toggle').addEventListener('click',toggleSidebar);
 bindRowClicks('ov-events'); bindRowClicks('sec-rows');
 $('btn-close-drawer').addEventListener('click',closeDrawer); $('drawer-backdrop').addEventListener('click',closeDrawer);
 document.addEventListener('keydown',e=>{
@@ -645,9 +985,10 @@ $('ov-resume').addEventListener('click',()=>runAction('resume',$('ov-resume'),tr
 $('btn-pause').addEventListener('click',()=>runAction('pause',$('btn-pause'),tr('守护已暂停')));
 $('btn-rescan').addEventListener('click',()=>runAction('rescan',$('btn-rescan'),'',{},'rescan'));
 $('btn-sec-rescan').addEventListener('click',()=>runAction('rescan',$('btn-sec-rescan'),'',{},'rescan'));
-$('btn-retry').addEventListener('click',tick); $('btn-refresh-usage').addEventListener('click',loadUsage);
-$('skill-search').addEventListener('input',renderSecurity);
-document.querySelectorAll('.filter').forEach(b=>b.addEventListener('click',()=>{FILTER=b.dataset.filter;document.querySelectorAll('.filter').forEach(x=>{x.classList.toggle('active',x===b);x.setAttribute('aria-pressed',x===b?'true':'false');});renderSecurity();}));
+$('btn-retry').addEventListener('click',tick); $('btn-refresh-usage').addEventListener('click',()=>loadUsage(true,true));
+document.querySelectorAll('[data-usage-view]').forEach(button=>button.addEventListener('click',()=>{USAGE_VIEW=button.dataset.usageView;renderUsageDetail();}));
+$('skill-search').addEventListener('input',()=>{PROCESSING.clear();renderSecurity();});
+document.querySelectorAll('.filter').forEach(b=>b.addEventListener('click',()=>{if(FILTER!==b.dataset.filter)PROCESSING.clear();FILTER=b.dataset.filter;document.querySelectorAll('.filter').forEach(x=>{x.classList.toggle('active',x===b);x.setAttribute('aria-pressed',x===b?'true':'false');});renderSecurity();}));
 $('root-form').addEventListener('submit',async e=>{
   e.preventDefault(); if(PENDING.has('roots') || !CONNECTED)return; const path=$('root-path').value.trim();
   if(!path || /[\r\n\x00]/.test(path) || !/^(?:[A-Za-z]:[\\/]|\\\\[^\\]+\\[^\\]+|\/|~[\\/])/.test(path)) { $('root-error').hidden=false; delete $('root-error').dataset.error; $('root-error').textContent=tr('请填写完整的文件夹路径，例如 C:\\Users\\你的用户名\\.agents\\skills'); $('root-path').setAttribute('aria-invalid','true'); $('root-path').focus(); return; }
@@ -658,7 +999,7 @@ $('root-form').addEventListener('submit',async e=>{
 $('settings-roots').addEventListener('click',async e=>{const b=e.target.closest('button.remove-root');if(!b || PENDING.has('roots') || !CONNECTED)return;await runAction('remove_root',b,tr('已停止监听该文件夹，文件保留'),{path:b.dataset.path},'roots');});
 updateHTML('ov-tiles',[tr('技能文件夹'),tr('今日新增技能'),tr('今日内容有变化'),tr('今日高风险提醒')].map((label,i)=>metric(label,null,'overview-loading-'+i)).join(''));
 updateHTML('sec-tiles',[tr('已记录技能'),tr('有严重风险'),tr('内容有变化'),tr('新技能待确认')].map((label,i)=>metric(label,null,'security-loading-'+i)).join(''));
-I18N.set(I18N.language); I18N.apply(); renderUsageDetail(); paintAvailability();
+I18N.set(I18N.language); I18N.apply(); paintHeaderControls(); paintSidebar(); renderUsageDetail(); paintAvailability();
 try{switchScreen(localStorage.getItem('skillradar-screen') || 'overview');}catch{switchScreen('overview');}
 window.addEventListener('pywebviewready',()=>{tick();if(ACTIVE_SCREEN==='usage' && USAGE_PHASE!=='loading')loadUsage();});
 tick(); setInterval(tick,2000);

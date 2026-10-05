@@ -41,6 +41,41 @@ RULES = "- id: T\n  category: EXEC\n  severity: HIGH\n  description: d\n  patter
 # 真实 CRITICAL 规则 SR-THEFT-001（id_rsa + cat 同行），见 test_scan_critical_in_block_mode_blocks
 
 
+def test_daemon_persists_file_times_and_does_not_reset_install_on_rescan(tmp_path, monkeypatch):
+    from datetime import datetime
+    _redirect(tmp_path, monkeypatch)
+    pool = _pool(tmp_path)
+    skill = _mk_skill(pool, "dated")
+    _register(pool, tmp_path, monkeypatch)
+    os.utime(skill / "SKILL.md", (1720000000, 1720000000))
+    daemon = Daemon(roots=[str(pool)], rules_text="", blocklist_text="[]")
+    assert daemon.scan_changed_skill(str(skill)) == "NEW"
+    first = daemon.state.skills[str(skill)]
+    assert first["installed_at"]
+    assert datetime.fromisoformat(first["updated_at"]).timestamp() == 1720000000
+    assert first["install_time_source"].startswith("skill_md_")
+    assert first["installed_at"] != first["scanned_at"] or first["updated_at"] != first["scanned_at"]
+    assert daemon.scan_changed_skill(str(skill)) == "OK"
+    assert daemon.state.skills[str(skill)]["installed_at"] == first["installed_at"]
+    persisted = skill_guard.load_snapshots()["skills"][str(skill)]
+    assert persisted["installed_at"] == first["installed_at"]
+    assert persisted["updated_at"] == first["updated_at"]
+
+
+def test_scan_failure_keeps_available_file_time_metadata(tmp_path, monkeypatch):
+    _redirect(tmp_path, monkeypatch)
+    pool = _pool(tmp_path)
+    skill = _mk_skill(pool, "failed")
+    daemon = Daemon(roots=[str(pool)])
+    def boom(*args, **kwargs):
+        raise RuntimeError("failure")
+    monkeypatch.setattr(skill_guard, "run_engine", boom)
+    assert daemon.scan_changed_skill(str(skill)) == "ERROR"
+    row = daemon.state.skills[str(skill)]
+    assert row["installed_at"] and row["updated_at"]
+    assert row["check_status"] == "error" and row["scan_complete"] is False
+
+
 def test_mark_dirty_and_debounce_merge(tmp_path, monkeypatch):
     _redirect(tmp_path, monkeypatch)
     pool = _pool(tmp_path); _register(pool, tmp_path, monkeypatch)

@@ -11,6 +11,7 @@ load_yaml 仅支持一个迷你 YAML 子集（规则与配置文件都用它）�
 """
 import base64, codecs, hashlib, json, math, os, re, shutil, stat, subprocess, sys, tempfile
 from dataclasses import dataclass, field
+from collections import deque
 
 def _yaml_parts(s, separator):
     """按引号外分隔符切分，保留规则正则中的原样反斜杠。"""
@@ -275,6 +276,7 @@ BLOB_MIN_LEN = 24
 # → 12000 候选），候选总数与解码产出总字节数双封顶，超限停止新增并报告截断。
 MAX_DECODE_CANDIDATES = 200
 MAX_DECODE_TOTAL_BYTES = 512 * 1024
+DECODE_POLICY_VERSION = "unique-bfs-v1"
 
 # CJK 表意/音节文字与全形标点区间：熵检测的剔除对象。混淆 blob 本质是
 # base64/hex 类 ASCII 串（剔除语义不变）；而语义文字按全字符多重集算熵天然
@@ -299,26 +301,63 @@ def _entropy(s):
     n = len(s)
     return -sum(c / n * math.log2(c / n) for c in counts.values())
 
-def _decode_candidates(text):
-    """产出 (候选列表, 是否截断)，候选为 (层数, 解码文本)。base64/hex/rot13；
-    递归上限 5 层；膨胀上限（候选总数 / 解码总字节）超限即停止新增并置截断标记。"""
-    found = []
-    total = 0
-    truncated = False
-    def _dec(t, depth):
-        nonlocal total, truncated
-        if truncated or depth > 5: return
-        for tok in re.findall(r"[A-Za-z0-9+/=]{%d,}" % BLOB_MIN_LEN, t):
-            for cand in _try_b64(tok) + _try_hex(tok) + _try_rot13(tok):
-                if len(found) >= MAX_DECODE_CANDIDATES or \
-                        total + len(cand.encode("utf-8")) > MAX_DECODE_TOTAL_BYTES:
-                    truncated = True
-                    return
-                found.append((depth + 1, cand))
-                total += len(cand.encode("utf-8"))
-                _dec(cand, depth + 1)
-    _dec(text, 0)
-    return found, truncated
+def _decode_candidates(text, diagnostics=None, max_depth=5):
+    """Decode distinct texts in shortest-depth order with strict resource caps.
+
+    A token transformed by ROT13 twice is its original text. Revisiting it adds
+    no scan coverage and must not exhaust the candidate budget. Breadth-first
+    traversal also ensures a duplicate first found via a longer chain cannot
+    suppress its shallower expansion. Diagnostic locations refer to the original
+    token even when a nested transform reaches the bound.
+    """
+    found, total = [], 0
+    blob = re.compile(r"[A-Za-z0-9+/=]{%d,}" % BLOB_MIN_LEN)
+    # Queued bodies are bounded by accepted candidates/bytes; original tokens
+    # are not copied into a potentially unbounded set. Membership is searched
+    # in the already-bounded original document instead.
+    seen = {text}
+    processed_tokens = set()
+    queue = deque([(text, 0, None, None)])
+    while queue:
+        body, depth, origin_line, origin_excerpt = queue.popleft()
+        if depth >= max_depth:
+            continue
+        for match in blob.finditer(body):
+            token = match.group(0)
+            if token in processed_tokens:
+                continue
+            # This set is bounded independently of duplicate input occurrences.
+            # Keep only tokens that actually create accepted decode candidates.
+            line = origin_line or text.count("\n", 0, match.start()) + 1
+            excerpt = origin_excerpt or token[:120]
+            accepted = False
+            for encoding, decoder in (("base64", _try_b64), ("hex", _try_hex), ("rot13", _try_rot13)):
+                for candidate in decoder(token):
+                    if candidate in seen or candidate == token:
+                        continue
+                    # Original literal tokens were already scanned by L1/L2.
+                    # Do not add them back through a self-inverse transform.
+                    if candidate and candidate in text and any(
+                            hit.group(0) == candidate for hit in blob.finditer(text)):
+                        continue
+                    candidate_bytes = len(candidate.encode("utf-8"))
+                    limit = "candidate_count" if len(found) >= MAX_DECODE_CANDIDATES else \
+                            "decoded_bytes" if total + candidate_bytes > MAX_DECODE_TOTAL_BYTES else None
+                    if limit:
+                        if diagnostics is not None:
+                            diagnostics.update(line=line, excerpt=excerpt, encoding=encoding,
+                                               depth=depth + 1, candidates=len(found), decoded_bytes=total,
+                                               omitted_bytes=candidate_bytes, limit=limit)
+                        return found, True
+                    seen.add(candidate)
+                    found.append((depth + 1, candidate))
+                    total += candidate_bytes
+                    accepted = True
+                    queue.append((candidate, depth + 1, line, excerpt))
+            if accepted and len(processed_tokens) < MAX_DECODE_CANDIDATES:
+                processed_tokens.add(token)
+    return found, False
+
 
 def _try_b64(tok):
     try:
@@ -357,11 +396,17 @@ def run_l3(files, rules, max_depth=5):
             if any(ch in line for ch in ZERO_WIDTH):
                 findings.append(Finding("SR-OBFUS-002", "OBFUS", "HIGH", rel, i,
                     line.strip()[:200], "隐藏字符（零宽/ homoglyph 标记）", []))
-        cands, truncated = _decode_candidates(text)
+        diagnostics = {}
+        cands, truncated = _decode_candidates(text, diagnostics, max_depth=max_depth)
         if truncated:
-            findings.append(Finding("SR-OBFUS-004", "OBFUS", "LOW", rel, 1, "",
-                                    "解码候选超限截断（膨胀上限 MAX_DECODE_CANDIDATES/"
-                                    "MAX_DECODE_TOTAL_BYTES），解码重扫可能不完整", []))
+            limit = "候选数量" if diagnostics["limit"] == "candidate_count" else "解码总字节"
+            message = (f"解码检查达到{limit}上限：已检查 {diagnostics['candidates']}/"
+                       f"{MAX_DECODE_CANDIDATES} 个不同候选，解码 {diagnostics['decoded_bytes']}/"
+                       f"{MAX_DECODE_TOTAL_BYTES} 字节；未检查 {diagnostics['encoding']} 第 "
+                       f"{diagnostics['depth']} 层候选（{diagnostics['omitted_bytes']} 字节）。"
+                       "请查看该位置的编码内容，必要时拆分文件后重新检查。")
+            findings.append(Finding("SR-OBFUS-004", "OBFUS", "LOW", rel,
+                                    diagnostics["line"], diagnostics["excerpt"], message, []))
         for depth, decoded in cands:
             if depth > max_depth:
                 continue
@@ -875,10 +920,11 @@ def snapshot_dir(root, status, score):
     每次保存都会改写其内容，若入基线则每次比对必把存储自身报为 changed
     （自引用漂移）。按绝对路径精确排除，不影响恰好同名的其他文件。"""
     from datetime import datetime
+    from skill_inventory import file_times
     store = os.path.abspath(SNAPSHOTS_NAME)
     files = [(rel, t) for rel, t in collect_text_files(root)
              if os.path.abspath(os.path.join(root, rel)) != store]
-    return {"name": os.path.basename(os.path.normpath(root)), "status": status,
+    return {**file_times(root), "name": os.path.basename(os.path.normpath(root)), "status": status,
             "score": score, "scanned_at": datetime.now().isoformat(timespec="seconds"),
             "hashes": {rel: hashlib.sha256(t.encode("utf-8", errors="replace")).hexdigest()
                        for rel, t in files}}
@@ -1087,9 +1133,7 @@ def audit_roots(roots, rules_text, blocklist_text, snapshots, cfg, max_depth=5):
             rep.findings = apply_trust(rep.findings, trusted)
             rep.score = score_findings(rep.findings)   # 信任降级后重算：报告头/状态行/快照/§9 门控按降级后分数自洽
             last_findings[skill] = rep.findings
-            new = {"name": entry, "status": "baseline-unreviewed", "score": rep.score,
-                   "scanned_at": datetime.now().isoformat(timespec="seconds"),
-                   "hashes": snapshot_dir(skill, "x", rep.score)["hashes"]}
+            new = snapshot_dir(skill, "baseline-unreviewed", rep.score)
             old = snapshots["skills"].get(skill)
             if old is None:
                 head = f"NEW       {entry}  score={rep.score}  → baseline-unreviewed"
@@ -1121,6 +1165,10 @@ def audit_roots(roots, rules_text, blocklist_text, snapshots, cfg, max_depth=5):
             snapshots["skills"][skill] = new
             rep.skill_name = entry; rep.root = skill
             block = _sanitize(head) + "\n" + render_report(rep)
+            block += "\n" + _sanitize(f"  安装时间（估算）: {new.get('installed_at') or '安装时间未知'}"
+                                      f"  最近更新时间: {new.get('updated_at') or '更新时间未知'}"
+                                      f"  检查时间: {new['scanned_at']}")
+            block += "\n  时间来源: SKILL.md 文件创建/修改时间；复制、恢复或重建可能改变创建时间。"
             if new["status"] == "drifted" and not any(f.severity == "CRITICAL" for f in rep.findings):
                 # 「拒绝安装」既有文案在纯漂移场景归因失真；附加一行纠正说明
                 #（追加-only；render_report 侧的文案分支化已由 CLI 任务落地）

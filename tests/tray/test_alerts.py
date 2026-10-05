@@ -87,6 +87,39 @@ def test_toast_text_sanitized():
     assert "\u200b" not in got and "\ufeff" not in got
 
 
+def test_windows_toast_never_creates_a_console_window(monkeypatch):
+    """无控制台的 EXE 发通知时，PowerShell 子进程不能另开黑色窗口。"""
+    captured = {}
+    no_window = 0x08000000
+    monkeypatch.setattr(alerts.sys, "platform", "win32")
+    monkeypatch.setattr(alerts.subprocess, "CREATE_NO_WINDOW", no_window, raising=False)
+
+    def fake_run(argv, **kwargs):
+        captured.update(argv=argv, kwargs=kwargs)
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(alerts.subprocess, "run", fake_run)
+    assert toast("SkillRadar", "test notification") == "SkillRadartest notification"
+    assert captured["argv"][0] == "powershell"
+    assert captured["kwargs"].get("creationflags", 0) & no_window
+    assert captured["kwargs"]["capture_output"] is True
+
+
+def test_macos_toast_keeps_platform_specific_launch_options(monkeypatch):
+    """Windows 隐藏控制台参数不能传给 macOS 通知进程。"""
+    captured = {}
+    monkeypatch.setattr(alerts.sys, "platform", "darwin")
+
+    def fake_run(argv, **kwargs):
+        captured.update(argv=argv, kwargs=kwargs)
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(alerts.subprocess, "run", fake_run)
+    toast("SkillRadar", "test notification")
+    assert captured["argv"][0] == "osascript"
+    assert "creationflags" not in captured["kwargs"]
+
+
 def test_toast_failure_falls_back_to_notify(monkeypatch):
     """终审 M-4：平台子进程路径失败（OSError 或非零返回码）时降级 notify(t, m)；
     notify=None（默认）时静默兜底不炸。monkeypatch 掉 subprocess.run，不真跑。"""

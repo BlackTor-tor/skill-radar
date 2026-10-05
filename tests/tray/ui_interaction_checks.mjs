@@ -205,6 +205,7 @@ try {
       await screenshot(`${capturePrefix}-security.png`);
       if(layoutAudit)await auditLayout('security');
       await click('nav.sidebar button[data-screen="usage"]');
+      await click('[data-usage-view="ranking"]');
       await waitFor(`document.querySelector('#usage-detail table') !== null`);
       await pause(230);
       await screenshot(`${capturePrefix}-usage.png`);
@@ -382,8 +383,8 @@ try {
       for (const label of ['Overview', 'Security', 'Usage', 'Settings']) {
         assert(nav.some(text => text.includes(label)), `English navigation is missing ${label}`);
       }
-      assert.equal(await evaluate(`document.getElementById('sync-time').innerText.includes('已同步')`), false,
-        'The connection status must use the selected interface language');
+      assert.equal(await evaluate(`document.getElementById('sync-time')`), null,
+        'The redundant topbar synchronization label must be removed');
       assert.equal(await evaluate(`window.__ui_test_actions.some(a => a.name==='set_language' && a.payload.language==='en')`), true,
         'The language choice must be persisted through the desktop bridge');
       await click('nav.sidebar button[data-screen="security"]');
@@ -427,8 +428,8 @@ try {
       });
       await reset();
       await waitFor(`document.getElementById('ui-language')?.value === 'en'`);
-      assert.equal(await evaluate(`document.getElementById('sync-time').innerText.includes('已同步')`), false,
-        'Loading the saved English language must translate the initial connection status');
+      assert.equal(await evaluate(`document.getElementById('sync-time')`), null,
+        'Loading a saved language must not restore the removed synchronization label');
       assert.equal(await evaluate(`document.documentElement.lang`), 'en');
     });
     await check('ui_language_stale_state_after_save', async () => {

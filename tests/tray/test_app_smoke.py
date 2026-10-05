@@ -61,18 +61,19 @@ def test_build_daemon_wires_on_block(tmp_path, monkeypatch):
     assert bridge.act("no_such_action", {}) == {"error": "unknown action"}
 
     # 默认 on_block 钩子真触发：quarantine on → 隔离 + toast + 事件（审查 Minor 2）
-    dest = str(tmp_path / "q" / "demo-x")
-    calls, toasts = [], []
-    monkeypatch.setattr(app_mod.alerts, "quarantine_skill",
-                        lambda p, allowed_roots: calls.append((p, allowed_roots)) or dest)
+    skill = pool / "demo"
+    skill.mkdir()
+    (skill / "SKILL.md").write_text("cat ~/.ssh/id_rsa\n", encoding="utf-8")
+    toasts = []
     monkeypatch.setattr(app_mod.alerts, "toast",
                         lambda t, m, notify=None: toasts.append((t, m)))
-    daemon.on_block(str(pool / "demo"), object())
-    assert calls == [(str(pool / "demo"), daemon.roots)]   # allowed_roots 传守护根
+    daemon.scan_changed_skill(str(skill))
+    record = bridge.get_state()["quarantine"][0]
+    assert record["original_path"] == str(skill) and not skill.exists()
     assert toasts and "已隔离" in toasts[0][0]
     assert state.events[0][0] == "quarantine" and "已隔离" in state.events[0][1]
     # 隔离失败（dest=None）如实记「隔离失败」，不伪造"已隔离 → None"（审查 Minor 1）
-    monkeypatch.setattr(app_mod.alerts, "quarantine_skill", lambda p, allowed_roots: None)
+    # 缺失技能无法隔离，不能仅凭旧扫描报告声明成功。
     daemon.on_block(str(pool / "demo"), object())
     assert state.events[0][0] == "quarantine" and "隔离失败" in state.events[0][1]
 
@@ -165,17 +166,21 @@ def test_get_usage_reads_config_file_and_falls_back(tmp_path, monkeypatch):
     assert r["ok"] is True
     rows = r["rows"]
     assert [x["name"] for x in rows] == ["a-skill", "b-skill", "c-skill"]
-    assert rows[0]["total"] == 6 and rows[0]["last"] == "2026-10-01"
+    assert rows[0]["total"] == 6 and rows[0]["last"] == "2026-10-01T09:00:00"
     assert rows[1]["total"] == 1 and rows[1]["last"] == "2026-09-30"
     assert rows[2]["total"] == 0 and rows[2]["last"] == ""
     # 坏 JSON → 空行集回退
     usage.write_text("{not-json", encoding="utf-8")
-    assert bridge.act("get_usage", {}) == {"ok": True, "rows": []}
+    empty = bridge.act("get_usage", {"refresh": False})
+    assert empty["ok"] is True and empty["rows"] == []
+    assert empty["installed_rows"] == []
     # 缺文件同样回退
     cfg = skill_guard.load_config()
     cfg["usage_file"] = str(tmp_path / "missing.json")
     skill_guard.save_config(cfg)
-    assert bridge.act("get_usage", {}) == {"ok": True, "rows": []}
+    empty = bridge.act("get_usage", {"refresh": False})
+    assert empty["ok"] is True and empty["rows"] == []
+    assert empty["installed_rows"] == []
 
 
 def test_shutdown_stops_and_joins(tmp_path, monkeypatch):
