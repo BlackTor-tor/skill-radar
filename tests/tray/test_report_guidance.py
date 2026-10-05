@@ -262,7 +262,8 @@ def test_guidance_matches_resolved_identity_without_rewriting_display_path(tmp_p
     alias = prefix + "alias-client/skills/risk"
     canonical = prefix + "physical-client/skills/risk"
     monkeypatch.setattr(guidance.os.path, "realpath", lambda path, **kwargs:
-        canonical if "alias-client" in os.fspath(path) else original(path, **kwargs))
+        canonical if "alias-client" in os.fspath(path) or "physical-client" in os.fspath(path)
+        else original(path, **kwargs))
     _, report = generate(tmp_path, {alias: security()}, [installation("risk", path=canonical)])
     assert report["guidance"]["counts"]["cleanup"] == 0
     assert report["guidance"]["groups"]["confirm"][0]["path"] == alias
