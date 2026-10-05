@@ -200,7 +200,7 @@ try {
   await check('appearance_persists_after_reload_with_language_and_page', async () => {
     await click('nav.sidebar button[data-screen="settings"]');
     await changeLanguage('en'); await click('#btn-theme');
-    assert.equal(await theme(), 'dark'); await themeAction('Switch to light appearance');
+    assert.equal(await theme(), 'dark');
     await navigate();
     assert.equal(await theme(), 'dark', 'Reload must retain the saved dark appearance');
     await themeAction('Switch to light appearance');
