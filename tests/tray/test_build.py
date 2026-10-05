@@ -67,7 +67,7 @@ def test_pyinstaller_args_windows(monkeypatch):
     cmd = build_tray.pyinstaller_cmd()
     joined = " ".join(cmd)
     assert "--onefile" in cmd and "--windowed" in cmd
-    assert "tray/app.py" in joined.replace("\\", "/")
+    assert "src/tray/app.py" in joined.replace("\\", "/")
     # add-data 两个数据目录都在场（web/index.html 与 rules/ 必须随包）
     assert "--add-data" in joined and "tray/web" in joined and "rules" in joined
 

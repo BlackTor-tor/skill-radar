@@ -40,7 +40,8 @@ class Daemon:
         self.consume_thread = None   # app 层把 consume 线程句柄回挂于此（join 用）
         self.on_block = lambda skill_path, rep: None
         self.on_alert = lambda skill_path, rep, status: None
-        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        source_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        base = os.path.dirname(source_dir) if os.path.basename(source_dir) == "src" else source_dir
         self.rules_text = rules_text if rules_text is not None else \
             self._read(os.path.join(base, "rules", "defaults.yaml"))
         self.blocklist_text = blocklist_text if blocklist_text is not None else \

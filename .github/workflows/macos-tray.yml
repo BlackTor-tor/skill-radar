@@ -7,7 +7,7 @@ name: macos-tray
 on:
   push:
     branches: [main]
-    paths: ['tray/**', 'skill_guard.py', 'skill_add.py', 'skill_report.py', 'skill_monitor.py', 'skill_inventory.py', 'tests/**', 'rules/**', 'requirements-gui.txt', 'build_tray.py', '.github/workflows/macos-tray.yml']
+    paths: ['src/**', 'tray/**', 'tests/**', 'rules/**', 'pytest.ini', 'requirements-gui.txt', 'build_tray.py', '.github/workflows/macos-tray.yml']
   workflow_dispatch:
 
 jobs:

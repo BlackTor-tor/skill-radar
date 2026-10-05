@@ -138,5 +138,5 @@ def quarantine_skill(skill_path, allowed_roots):
                 f"恢复方法（确认安全后）: {restore_command(dest, skill_path)}\n"
                 f"（Windows cmd 恢复命令如上；macOS/Linux 请用: "
                 f'mv -- {shlex.quote(dest)} {shlex.quote(skill_path)}）\n'
-                f"审查建议: python skill_guard.py scan \"{skill_path}\"\n")
+                f"审查建议: python src/skill_guard.py scan \"{skill_path}\"\n")
     return dest

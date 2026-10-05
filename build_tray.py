@@ -1,11 +1,12 @@
-# build_tray.py — SkillRadar Tray 打包驱动（规格 §1c 矩阵：
+# build_tray.py — SkillRadar Tray 打包驱动（入口位于 src/tray/app.py）：
 # Windows=onefile exe；macOS=windowed .app + hdiutil 出 dmg）
 import os
 import subprocess
 import sys
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-ENTRY = os.path.join(BASE, "tray", "app.py")
+SRC = os.path.join(BASE, "src")
+ENTRY = os.path.join(SRC, "tray", "app.py")
 WEB = os.path.join(BASE, "tray", "web")
 ASSETS = os.path.join(BASE, "tray", "assets")
 
@@ -24,7 +25,7 @@ def pyinstaller_cmd():
            # rules/ 与核心 .py 打进包：守护在无源码环境也要能扫
            "--add-data", add_data_rules,
            "--add-data", add_data_assets,
-           "--paths", BASE, ENTRY]
+           "--paths", SRC, "--paths", BASE, ENTRY]
     if sys.platform == "win32":
         cmd.insert(cmd.index("--windowed") + 1, "--onefile")
     return cmd   # macOS：windowed 产出 .app（spec §1c：dmg 后续 hdiutil）

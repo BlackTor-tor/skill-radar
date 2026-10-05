@@ -1,4 +1,5 @@
 @echo off
 chcp 65001 >nul
-python "%~dp0skill_monitor.py" %*
+set "PYTHONPATH=%~dp0src;%PYTHONPATH%"
+python "%~dp0src\skill_monitor.py" %*
 pause

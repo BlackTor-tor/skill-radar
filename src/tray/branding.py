@@ -13,8 +13,9 @@ _STATUS_COLORS = {
 
 def asset_path(name):
     """取得客户端内置图标路径，兼容 PyInstaller 的临时解包目录。"""
-    base = getattr(sys, "_MEIPASS", None) or os.path.dirname(
-        os.path.dirname(os.path.abspath(__file__)))
+    source_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    base = getattr(sys, "_MEIPASS", None) or (os.path.dirname(source_dir)
+        if os.path.basename(source_dir) == "src" else source_dir)
     return os.path.join(base, "tray", "assets", name)
 
 

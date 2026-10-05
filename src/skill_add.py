@@ -1,10 +1,10 @@
 """skill-radar add 网关：装前拦截（v2.2 规格 §1a）。
 
 用法（无独立二进制，入口即 skill_guard.py）：
-    python skill_guard.py add [--block] <npx skills add 的参数...>
-    python skill_guard.py add [--block] -- skills add <参数...>   # alias 形态
+    python src/skill_guard.py add [--block] <npx skills add 的参数...>
+    python src/skill_guard.py add [--block] -- skills add <参数...>   # alias 形态
 alias 加速器（README 同步给出）：
-    alias skills='python /path/to/skill_guard.py add -- skills'
+    alias skills='python /path/to/skill-radar/src/skill_guard.py add -- skills'
 """
 import os
 import re
@@ -92,7 +92,8 @@ def run_install(user_args):
 
 def _repo_file(name):
     """rules/ 下文件路径（网关与 CLI 同仓，规则口径一致）。"""
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "rules", name)
+    base = getattr(sys, "_MEIPASS", None) or globals().get("__project_root__") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, "rules", name)
 
 
 def baseline_new_skills():
@@ -123,7 +124,7 @@ def cmd_add(argv):
     rest = strip_passthrough_prefix(rest)
     token, url, repo = extract_target(rest)
     if token is None:
-        print("usage: skill_guard.py add [--block] -- <npx skills add 参数...>",
+        print("usage: src/skill_guard.py add [--block] -- <npx skills add 参数...>",
               file=sys.stderr)
         return 2
     cfg = persist_block_mode(cfg, block)

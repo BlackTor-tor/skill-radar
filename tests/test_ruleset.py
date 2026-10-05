@@ -17,7 +17,7 @@ def test_all_rules_load_and_are_valid():
 def test_cli_default_rules_path_resolves_to_defaults_yaml():
     # 闭环：scan/audit 的 --rules 默认路径即本文件（parse_rules 可正常加载）。
     import skill_guard
-    dflt = os.path.join(os.path.dirname(skill_guard.__file__), "rules", "defaults.yaml")
+    dflt = skill_guard.RULES_ROOT + os.sep + "defaults.yaml"
     assert os.path.realpath(dflt) == os.path.realpath(DEFAULTS)
     assert len(parse_rules(dflt)) >= 15
 

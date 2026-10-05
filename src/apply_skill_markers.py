@@ -16,8 +16,8 @@ Idempotent: files that already carry a marker are skipped.
 NOTE: `npx skills update` overwrites SKILL.md — re-run this script afterwards.
 
 Usage:
-    python apply_skill_markers.py            # inject
-    python apply_skill_markers.py --remove   # remove all markers
+    python src/apply_skill_markers.py            # inject
+    python src/apply_skill_markers.py --remove   # remove all markers
 """
 import json
 import hashlib
@@ -42,7 +42,8 @@ SKILL_ROOTS = [
     os.path.join(HOME, ".qoder-cn", "skills"),
     os.path.join(HOME, ".zcode", "skills"),  # mostly symlinks to .agents; idempotent
 ]
-MARKER_MAP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "skill_markers.json")
+_MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
+MARKER_MAP = os.path.join(os.path.dirname(_MODULE_DIR) if os.path.basename(_MODULE_DIR) == "src" else _MODULE_DIR, "skill_markers.json")
 MARKER_RE = re.compile(r"<!--\s*skill-marker:([^>]+?)-->")
 TRAILING_MARKER_RE = re.compile(rb"(?:\r?\n)?[ \t]*<!--\s*skill-marker:([^\r\n>]+?)-->[ \t]*(?:\r?\n)?\Z")
 

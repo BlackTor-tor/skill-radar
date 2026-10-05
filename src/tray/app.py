@@ -18,11 +18,17 @@ def _res_base():
     dirname(dirname(__file__))——frozen 下入口脚本 __file__ 落在 _MEIPASS 根，
     二层 dirname 会指到 %TEMP%（D-1 白屏根因：index.html 实际在
     _MEIPASS/tray/web/ 下）。frozen 分支优先，回退源码口径。"""
-    return getattr(sys, "_MEIPASS", None) or \
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if getattr(sys, "_MEIPASS", None):
+        return sys._MEIPASS
+    source_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.dirname(source_dir) if os.path.basename(source_dir) == "src" else source_dir
 
 
 BASE = _res_base()
+# 源码模式下入口位于 src/tray，生产模块位于其上一级 src；迁移后不再依赖根目录兼容脚本。
+SOURCE_MODULE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if os.path.isdir(SOURCE_MODULE_ROOT):
+    sys.path.insert(0, SOURCE_MODULE_ROOT)
 sys.path.insert(0, BASE)
 
 import skill_guard as sg            # noqa: E402

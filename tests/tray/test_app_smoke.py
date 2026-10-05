@@ -252,14 +252,14 @@ def test_quit_is_the_only_exit(monkeypatch):
 
 def test_res_base_frozen_vs_source(monkeypatch):
     # D-1 根因修复：frozen 下资源基 = sys._MEIPASS（数据文件解包处），
-    # 源码运行回退仓库根（tray/ 的父级）。
+    # 源码运行回退仓库根（src/tray 的祖父级）。
     import os
     import tray.app as app_mod
     monkeypatch.setattr(sys, "_MEIPASS", "C:/fake/_MEI1234", raising=False)
     assert app_mod._res_base() == "C:/fake/_MEI1234"
     monkeypatch.delattr(sys, "_MEIPASS")
     assert app_mod._res_base() == os.path.dirname(
-        os.path.dirname(os.path.abspath(app_mod.__file__)))
+        os.path.dirname(os.path.dirname(os.path.abspath(app_mod.__file__))))
 
 
 def test_run_guard_in_process(monkeypatch):

@@ -13,6 +13,11 @@ import base64, codecs, hashlib, json, math, os, re, shutil, stat, subprocess, sy
 from dataclasses import dataclass, field
 from collections import deque
 
+SOURCE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RULES_ROOT = os.path.join(getattr(sys, "_MEIPASS", None) or SOURCE_ROOT, "rules")
+if not os.path.isdir(RULES_ROOT):
+    RULES_ROOT = os.path.join(os.getcwd(), "rules")
+
 def _yaml_parts(s, separator):
     """按引号外分隔符切分，保留规则正则中的原样反斜杠。"""
     parts, start, quote, i = [], 0, None, 0
@@ -677,9 +682,9 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     p_scan = sub.add_parser("scan")
     p_scan.add_argument("target")
-    p_scan.add_argument("--rules", default=os.path.join(os.path.dirname(__file__), "rules", "defaults.yaml"))
+    p_scan.add_argument("--rules", default=os.path.join(RULES_ROOT, "defaults.yaml"))
     p_scan.add_argument("-f", "--rules-inline", dest="rules_inline")
-    p_scan.add_argument("--blocklist", default=os.path.join(os.path.dirname(__file__), "rules", "blocklist.yaml"))
+    p_scan.add_argument("--blocklist", default=os.path.join(RULES_ROOT, "blocklist.yaml"))
     p_scan.add_argument("--strict", action="store_true")
     p_scan.add_argument("--json", action="store_true")
     p_scan.add_argument("--yes", action="store_true")
@@ -692,10 +697,10 @@ def main(argv=None):
     # defaults.yaml 由计划二任务 15 填充，当前仓库尚未落地：默认路径存在则用之，
     # 否则回退空规则集文本（parse_rules("") → 无规则；漂移/基线/blocklist 不受影响）。
     # 显式传入的 --rules 始终严格读取（文件缺失即刻报错，不吞拼写错误）。
-    _audit_rules_default = os.path.join(os.path.dirname(__file__), "rules", "defaults.yaml")
+    _audit_rules_default = os.path.join(RULES_ROOT, "defaults.yaml")
     p_audit.add_argument("--rules",
                          default=_audit_rules_default if os.path.isfile(_audit_rules_default) else "")
-    p_audit.add_argument("--blocklist", default=os.path.join(os.path.dirname(__file__), "rules", "blocklist.yaml"))
+    p_audit.add_argument("--blocklist", default=os.path.join(RULES_ROOT, "blocklist.yaml"))
     p_audit.add_argument("--strict", action="store_true")
     p_audit.add_argument("--show-diff", metavar="SKILL",
                          help="打印该技能当前内容与最近基线的 diff（漂移确认后对上个基线；不落盘）")

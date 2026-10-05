@@ -20,12 +20,12 @@ historical scan, later runs take seconds.
 Counters/state: ~/.skill-radar/skill_usage{,_state}.json (SKILL_RADAR_DATA_DIR override)
 
 Usage:
-    python skill_monitor.py              # incremental scan + report
-    python skill_monitor.py --top 20     # show top N
-    python skill_monitor.py --watch 60   # live mode, rescan every N seconds
-    python skill_monitor.py --json       # dump raw counters
-    python skill_monitor.py --reset      # wipe state and rescan from scratch
-    python skill_monitor.py --log-root /absolute/history --log-source auto
+    python src/skill_monitor.py              # incremental scan + report
+    python src/skill_monitor.py --top 20     # show top N
+    python src/skill_monitor.py --watch 60   # live mode, rescan every N seconds
+    python src/skill_monitor.py --json       # dump raw counters
+    python src/skill_monitor.py --reset      # wipe state and rescan from scratch
+    python src/skill_monitor.py --log-root /absolute/history --log-source auto
 """
 import argparse
 import ast
@@ -52,7 +52,7 @@ CODEX_SESSIONS = os.path.join(os.environ.get("CODEX_HOME") or os.path.join(HOME,
 CURSOR_DIR = os.path.join(HOME, ".cursor")
 AGENTS_SKILLS = os.path.join(HOME, ".agents", "skills")
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def storage_paths(data_dir=None):
     """Persistent counters never live in a frozen executable's extraction folder."""
     root = data_dir or os.environ.get("SKILL_RADAR_DATA_DIR") or os.path.join(HOME, ".skill-radar")

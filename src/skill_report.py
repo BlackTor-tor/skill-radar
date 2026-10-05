@@ -13,11 +13,11 @@ Edge/Chrome 无头模式截图。skill-radar 本体保持零第三方依赖—�
 操作系统提供（Windows 10/11 必有 Edge），中文排版走系统字体。
 
 用法:
-    python skill_report.py                     # 两份报告都生成（HTML+PNG）
-    python skill_report.py usage|guard         # 只生成一份
-    python skill_report.py guard --fast        # 安全报告用快照分数，不重扫
-    python skill_report.py --html-only         # 只出 HTML，不调浏览器
-    python skill_report.py --out DIR --top 30
+    python src/skill_report.py                     # 两份报告都生成（HTML+PNG）
+    python src/skill_report.py usage|guard         # 只生成一份
+    python src/skill_report.py guard --fast        # 安全报告用快照分数，不重扫
+    python src/skill_report.py --html-only         # 只出 HTML，不调浏览器
+    python src/skill_report.py --out DIR --top 30
 输出: <out>/usage-report-<时间戳>.html/.png 与 guard-report-<时间戳>.html/.png
 """
 import argparse
@@ -36,8 +36,9 @@ try:
 except Exception:
     pass
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, BASE_DIR)
+_MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = globals().get("__project_root__") or (os.path.dirname(_MODULE_DIR) if os.path.basename(_MODULE_DIR) == "src" else _MODULE_DIR)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import skill_guard as sg  # noqa: E402  (same directory)
 from skill_inventory import collect_inventory, file_times, latest_time, merge_usage  # noqa: E402
@@ -420,7 +421,7 @@ def render_guard_html(skills_info, snapshots, top=30, detailed=None):
              '复制、恢复或重建文件可能改变创建时间；检查时间单独记录。</p>')
     if detailed:
         body += ("<p class='muted' style='margin-top:10px'>full findings detail: re-run with "
-                 "--json, or check per-skill scan output. drift evidence: skill_guard.py audit --show-diff &lt;skill&gt;</p>")
+                 "--json, or check per-skill scan output. drift evidence: src/skill_guard.py audit --show-diff &lt;skill&gt;</p>")
     return _page("Security Guard — 技能安全检查报告", meta, body)
 
 

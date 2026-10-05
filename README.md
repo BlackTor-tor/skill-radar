@@ -2,8 +2,8 @@
 
 **Local skill usage history, static security checks, and reports you can copy or download.**
 
-- **Usage Radar** (`skill_monitor.py`) reads structured Codex, zcode, and Claude Code session logs, plus optional marker and access-time evidence.
-- **Security Guard** (`skill_guard.py`) checks credential theft, risky execution, data exfiltration, prompt injection, and other supply-chain risks without executing scanned files.
+- **Usage Radar** (`src/skill_monitor.py`) reads structured Codex, zcode, and Claude Code session logs, plus optional marker and access-time evidence.
+- **Security Guard** (`src/skill_guard.py`) checks credential theft, risky execution, data exfiltration, prompt injection, and other supply-chain risks without executing scanned files.
 - **SkillRadar Tray** provides **Overview / Security / Usage / Reports / Settings**, background collection, individual and batch review, and a recoverable quarantine.
 - **Reports** include desktop **Markdown + offline HTML** check archives and CLI **HTML + PNG** summaries.
 
@@ -15,13 +15,13 @@ The CLI uses Python's standard library. Release workflows use Python 3.12; the o
 
 ```bash
 # Existing supported logs can be collected without injecting markers.
-python skill_monitor.py
-python skill_guard.py audit
-python skill_report.py --html-only
+python src/skill_monitor.py
+python src/skill_guard.py audit
+python src/skill_report.py --html-only
 
 # Run the optional client from the repository root.
 python -m pip install -r requirements-gui.txt
-python -m tray.app
+python src/tray/app.py
 ```
 
 CLI commands exit after a run unless `--watch` is requested. The client stays in the tray, watches registered skill directories, and collects history in the background. Closing the window hides it; the tray's Quit action stops it.
@@ -53,14 +53,14 @@ For other locations, select or enter an **absolute log directory or drive root**
 ### CLI collection
 
 ```bash
-python skill_monitor.py --top 20
-python skill_monitor.py --json
-python skill_monitor.py --watch 60
+python src/skill_monitor.py --top 20
+python src/skill_monitor.py --json
+python src/skill_monitor.py --watch 60
 
 # Repeat --log-root for multiple additional directories.
-python skill_monitor.py --log-root "F:\old-agent-logs" --log-source auto
-python skill_monitor.py --log-root "F:\codex-logs" --log-source codex --json
-python skill_monitor.py --log-root "F:\" --log-source auto
+python src/skill_monitor.py --log-root "F:\old-agent-logs" --log-source auto
+python src/skill_monitor.py --log-root "F:\codex-logs" --log-source codex --json
+python src/skill_monitor.py --log-root "F:\" --log-source auto
 ```
 
 `--log-source` accepts `auto/codex/zcode/claude` and applies to extra roots. Roots must exist and be absolute directories. `--reset` clears counters/offsets and rebuilds from retained logs; it cannot recover deleted history. Task Scheduler/cron can run the normal command periodically.
@@ -68,8 +68,8 @@ python skill_monitor.py --log-root "F:\" --log-source auto
 ### Optional markers
 
 ```bash
-python apply_skill_markers.py           # modifies known SKILL.md copies
-python apply_skill_markers.py --remove
+python src/apply_skill_markers.py           # modifies known SKILL.md copies
+python src/apply_skill_markers.py --remove
 ```
 
 Markers support agents without a structured parser and are not required for supported Codex/zcode/Claude records. The injector handles known stores, not every possible installation path. An idempotent `<!-- skill-marker:NAME -->` appended to a skill can appear in future logged reads. It cannot create evidence in old transcripts. Skill updates may remove markers; rerun the injector if needed. Injection/removal changes files and may trigger drift checks. Access-time evidence also depends on filesystem policy and is not an exact invocation count.
@@ -127,12 +127,12 @@ Archive files live in `~/.skill-radar/reports/` as separate timestamped Markdown
 The CLI generator is separate from desktop archives. It uses inline CSS and installed Edge/Chrome for optional PNG; `--html-only` needs no browser.
 
 ```bash
-python skill_report.py                  # usage + security summaries
-python skill_report.py usage            # saved counters; no log collection
-python skill_report.py guard            # rescans registered roots
-python skill_report.py guard --fast     # saved baseline scores; no rescan
-python skill_report.py --html-only
-python skill_report.py --out DIR --top 30
+python src/skill_report.py                  # usage + security summaries
+python src/skill_report.py usage            # saved counters; no log collection
+python src/skill_report.py guard            # rescans registered roots
+python src/skill_report.py guard --fast     # saved baseline scores; no rescan
+python src/skill_report.py --html-only
+python src/skill_report.py --out DIR --top 30
 ```
 
 Default output: `./skill-radar-reports/`. Usage includes Codex/zcode/Claude counts, marker hits, and access-time evidence. Security shows severity, baseline state, top risk scores, and install advice. Normal security mode rescans; `--fast` lacks full findings and labels that limit. CLI install advice does not record desktop review/trust.
@@ -141,14 +141,14 @@ Default output: `./skill-radar-reports/`. Usage includes Codex/zcode/Claude coun
 
 ```bash
 # Remote Git sources need network + Git; local directories work offline.
-python skill_guard.py scan https://github.com/someone/some-skills --strict
-python skill_guard.py discover
-python skill_guard.py audit
-python skill_guard.py audit --show-diff <full-skill-path>
-python skill_guard.py audit --accept-drift <full-skill-path>
-python skill_guard.py audit --strict
-python skill_guard.py audit --watch 60 --yes
-python skill_guard.py discover --deep --yes
+python src/skill_guard.py scan https://github.com/someone/some-skills --strict
+python src/skill_guard.py discover
+python src/skill_guard.py audit
+python src/skill_guard.py audit --show-diff <full-skill-path>
+python src/skill_guard.py audit --accept-drift <full-skill-path>
+python src/skill_guard.py audit --strict
+python src/skill_guard.py audit --watch 60 --yes
+python src/skill_guard.py discover --deep --yes
 ```
 
 Use full paths for ambiguous names. Initial baselines are `baseline-unreviewed`, not approval. Deep skill discovery and usage-log scanning are different operations. `discover --deep` and `audit --watch` require first-use interactive consent or explicit `--yes`, saved in configuration.
@@ -156,7 +156,7 @@ Use full paths for ambiguous names. Initial baselines are `baseline-unreviewed`,
 ### Pre-install gateway
 
 ```bash
-python skill_guard.py add [--block] -- <npx skills add arguments...>
+python src/skill_guard.py add [--block] -- <npx skills add arguments...>
 ```
 
 The gateway clones/checks a recognized source, prints findings/install advice, delegates to `npx skills add`, passes through its exit code, and baselines successful installs. `--block` persists `consent.add_block` and refuses a scanned “not recommended” verdict. Clone/scan failures warn and delegate to installation: the gateway is not a fail-closed guarantee for every error. Remote cloning/installation needs its normal network/runtime tools.
@@ -192,14 +192,14 @@ Desktop targets Windows/macOS with ReadDirectoryChangesW/FSEvents and a polling 
 
 | File | Purpose |
 | --- | --- |
-| `skill_monitor.py` | Structured-log collection and usage CLI |
-| `skill_guard.py`, `skill_add.py` | Static checks, discovery, baselines, install gateway |
-| `skill_report.py` | CLI HTML/PNG summaries |
-| `apply_skill_markers.py` | Optional marker injection/removal |
-| `tray/app.py`, `tray/daemon.py`, `tray/state.py` | Desktop bridge, live checks, events/state |
-| `tray/usage.py` | Background historical usage collection |
-| `tray/review.py`, `tray/processing.py` | Version-bound decisions, batches, quarantine/restore |
-| `tray/reports.py`, `tray/web/` | Report archive and local bilingual UI |
+| `src/skill_monitor.py` | Structured-log collection and usage CLI |
+| `src/skill_guard.py`, `src/skill_add.py` | Static checks, discovery, baselines, install gateway |
+| `src/skill_report.py` | CLI HTML/PNG summaries |
+| `src/apply_skill_markers.py` | Optional marker injection/removal |
+| `src/tray/app.py`, `src/tray/daemon.py`, `src/tray/state.py` | Desktop bridge, live checks, events/state |
+| `src/tray/usage.py` | Background historical usage collection |
+| `src/tray/review.py`, `src/tray/processing.py` | Version-bound decisions, batches, quarantine/restore |
+| `src/tray/`, `tray/web/` | Production client modules, report archive, and local bilingual UI |
 | `rules/` | Rules and IOC blocklist |
 | `monitor.bat`, `build_tray.py` | Windows text launcher and client build |
 
@@ -214,11 +214,11 @@ The static engine covers pattern matching, cross-file source→sink pairing, ent
 ### 快速开始
 
 ```bash
-python skill_monitor.py              # 已有历史日志，无需先加标记
-python skill_guard.py audit          # 检查登记技能并保存漂移基线
-python skill_report.py --html-only
+python src/skill_monitor.py              # 已有历史日志，无需先加标记
+python src/skill_guard.py audit          # 检查登记技能并保存漂移基线
+python src/skill_report.py --html-only
 python -m pip install -r requirements-gui.txt
-python -m tray.app                   # 在仓库根目录启动客户端
+python src/tray/app.py                                      # 在仓库根目录启动客户端
 ```
 
 命令行默认跑完退出，`--watch` 才持续运行。客户端常驻托盘监听技能并收集用量；关闭窗口只是隐藏，托盘「退出」才停止。
@@ -246,17 +246,17 @@ python -m tray.app                   # 在仓库根目录启动客户端
 其它位置可在用量页**选择文件夹或输入绝对目录/盘符根目录**后扫描，客户端自动识别支持的 Codex/zcode/Claude 记录；选定根目录会保存。全盘扫描由用户发起，启动时不默认扫全部磁盘。只读 `.jsonl`，跳过 Git、node_modules、缓存、回收站及系统卷目录，不递归目录链接、不修改日志、不上传会话正文。
 
 ```bash
-python skill_monitor.py --top 20
-python skill_monitor.py --json
-python skill_monitor.py --watch 60
-python skill_monitor.py --log-root "F:\old-agent-logs" --log-source auto
-python skill_monitor.py --log-root "F:\codex-logs" --log-source codex --json
-python skill_monitor.py --log-root "F:\" --log-source auto
+python src/skill_monitor.py --top 20
+python src/skill_monitor.py --json
+python src/skill_monitor.py --watch 60
+python src/skill_monitor.py --log-root "F:\old-agent-logs" --log-source auto
+python src/skill_monitor.py --log-root "F:\codex-logs" --log-source codex --json
+python src/skill_monitor.py --log-root "F:\" --log-source auto
 ```
 
 `--log-root` 可重复，`--log-source` 为 `auto/codex/zcode/claude` 并作用于新增目录；目录必须存在且为绝对路径。`--reset` 清空计数/偏移再从仍存在的日志重建，无法恢复已删除记录。
 
-`apply_skill_markers.py` 是可选兼容层，修改已知技能目录中的 SKILL.md 并幂等追加标记；`--remove` 移除标记。不能给没有标记的旧会话补造证据，更新技能后按需重新注入。注入/移除改变文件，可能触发漂移。Codex/zcode/Claude 支持格式无需此步骤，atime 也不能作为精确调用数。
+`src/apply_skill_markers.py` is an optional marker tool. It updates known SKILL.md files idempotently; use `--remove` to remove markers.
 
 ### 「需要关注」与人工处理
 
@@ -311,12 +311,12 @@ python skill_monitor.py --log-root "F:\" --log-source auto
 ### 命令行报告
 
 ```bash
-python skill_report.py                  # 用量+安全，HTML 和可选 PNG
-python skill_report.py usage            # 已保存计数，不采集新日志
-python skill_report.py guard            # 重扫登记技能
-python skill_report.py guard --fast     # 基线分数，不重扫
-python skill_report.py --html-only
-python skill_report.py --out DIR --top 30
+python src/skill_report.py                  # 用量+安全，HTML 和可选 PNG
+python src/skill_report.py usage            # 已保存计数，不采集新日志
+python src/skill_report.py guard            # 重扫登记技能
+python src/skill_report.py guard --fast     # 基线分数，不重扫
+python src/skill_report.py --html-only
+python src/skill_report.py --out DIR --top 30
 ```
 
 输出默认 `./skill-radar-reports/`；用量包含 Codex/zcode/Claude、标记命中、atime；安全含严重度/基线/风险分/建议。安全默认重扫，`--fast` 缺完整发现并注明限制。CLI 建议不保存客户端人工决定。PNG 需 Edge/Chrome，HTML 不需截图浏览器。
@@ -324,15 +324,15 @@ python skill_report.py --out DIR --top 30
 ### 安全命令行与装前网关
 
 ```bash
-python skill_guard.py scan <本地目录或Git-URL> --strict
-python skill_guard.py discover
-python skill_guard.py audit
-python skill_guard.py audit --show-diff <技能完整路径>
-python skill_guard.py audit --accept-drift <技能完整路径>
-python skill_guard.py audit --strict
-python skill_guard.py audit --watch 60 --yes
-python skill_guard.py discover --deep --yes
-python skill_guard.py add [--block] -- <npx skills add 的参数...>
+python src/skill_guard.py scan <本地目录或Git-URL> --strict
+python src/skill_guard.py discover
+python src/skill_guard.py audit
+python src/skill_guard.py audit --show-diff <技能完整路径>
+python src/skill_guard.py audit --accept-drift <技能完整路径>
+python src/skill_guard.py audit --strict
+python src/skill_guard.py audit --watch 60 --yes
+python src/skill_guard.py discover --deep --yes
+python src/skill_guard.py add [--block] -- <npx skills add 的参数...>
 ```
 
 首次基线是 `baseline-unreviewed`，先看变更再显式接受；同名歧义用完整路径。全盘找技能和全盘找日志不同。深度发现/持续审计首次需交互或 `--yes` 并保存授权。
