@@ -138,6 +138,7 @@ try {
     writeFileSync(resolve(captureDir, prefix + '-' + name + '.png'), Buffer.from(data.data, 'base64'));
   };
   await cdp('Page.enable'); await cdp('Runtime.enable');
+  await cdp('Emulation.setTimezoneOverride', {timezoneId: 'Asia/Singapore'});
   await cdp('Emulation.setDeviceMetricsOverride', {width, height, deviceScaleFactor: 1, mobile: false});
   await cdp('Page.addScriptToEvaluateOnNewDocument', {source: bridge});
   const reset = async () => {

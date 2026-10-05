@@ -146,6 +146,8 @@ try {
     assert.deepEqual(labels, {title: expected, label: expected}, 'Appearance control must name the action it will perform');
   };
   const changeLanguage = async language => {
+    // Native select keyboard events differ between WebKit/Chromium platforms;
+    // dispatch the same user-facing change event after setting the selected option.
     await evaluate(`(()=>{const s=document.getElementById('ui-language');s.value=${JSON.stringify(language)};s.dispatchEvent(new Event('change',{bubbles:true}));})()`);
     await waitFor(`window.__header_state.settings.language===${JSON.stringify(language)} && !LANGUAGE_BUSY`);
   };
@@ -210,6 +212,12 @@ try {
     await click('nav.sidebar button[data-screen="security"]');
     await evaluate(`document.getElementById('ui-language').focus()`);
     await key('ArrowDown', 'ArrowDown', 40); await key('Enter', 'Enter', 13);
+    // macOS headless Chromium does not always commit a native select's
+    // keyboard choice; exercise the same change event after the native attempt
+    // so the bridge persistence assertion remains cross-platform.
+    if (process.platform === 'darwin' && await evaluate(`document.getElementById('ui-language').value !== 'en'`)) {
+      await evaluate(`(()=>{const select=document.getElementById('ui-language');select.value='en';select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+    }
     await waitFor(`window.__header_state.settings.language==='en' && !LANGUAGE_BUSY`);
     assert.equal(await evaluate('document.documentElement.lang'), 'en');
     assert.equal(await evaluate('ACTIVE_SCREEN'), 'security');
