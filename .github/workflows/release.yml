@@ -147,6 +147,12 @@ jobs:
         with:
           python-version: '3.12'
           architecture: ${{ matrix.py_arch }}
+      - name: Verify x64 Rosetta toolchain
+        if: matrix.py_arch == 'x64'
+        run: |
+          arch
+          file "$(command -v python)"
+          arch -x86_64 python -c "import platform; print(platform.machine()); assert platform.machine() == 'x86_64'"
       - uses: actions/setup-node@v4
         with: { node-version: '22' }
       - name: Install Chromium for browser checks
@@ -158,16 +164,19 @@ jobs:
           browser='${{ steps.chrome.outputs.chrome-path }}'
           test -x "$browser"
           echo "SKILL_RADAR_BROWSER=$browser" >> "$GITHUB_ENV"
-      - run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-gui.txt
-          pip install pytest
-      - run: python -m pytest tests -q
-      - run: python build_tray.py
+      - name: Install dependencies
+        run: |
+          ${{ matrix.py_arch == 'x64' && 'arch -x86_64 python' || 'python' }} -m pip install --upgrade pip
+          ${{ matrix.py_arch == 'x64' && 'arch -x86_64 python' || 'python' }} -m pip install -r requirements-gui.txt
+          ${{ matrix.py_arch == 'x64' && 'arch -x86_64 python' || 'python' }} -m pip install pytest
+      - name: Run tests
+        run: ${{ matrix.py_arch == 'x64' && 'arch -x86_64 python' || 'python' }} -m pytest tests -q
+      - name: Build application
+        run: ${{ matrix.py_arch == 'x64' && 'arch -x86_64 python' || 'python' }} build_tray.py
       - name: Archive app with executable permissions
         run: ditto -c -k --sequesterRsrc --keepParent dist/SkillRadarTray.app dist/SkillRadarTray-macos.zip
       - name: Validate app, archive, architecture, and mounted DMG
-        run: python tests/tray/package_smoke.py --app dist/SkillRadarTray.app --archive dist/SkillRadarTray-macos.zip --dmg dist/SkillRadarTray.dmg --expected-arch "${{ matrix.arch }}"
+        run: ${{ matrix.py_arch == 'x64' && 'arch -x86_64 python' || 'python' }} tests/tray/package_smoke.py --app dist/SkillRadarTray.app --archive dist/SkillRadarTray-macos.zip --dmg dist/SkillRadarTray.dmg --expected-arch "${{ matrix.arch }}"
       - uses: actions/upload-artifact@v4
         with:
           name: SkillRadarTray-macos-${{ matrix.arch }}
