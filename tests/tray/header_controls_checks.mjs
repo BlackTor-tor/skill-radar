@@ -131,6 +131,9 @@ try {
     for (const type of ['mousePressed', 'mouseReleased']) await cdp('Input.dispatchMouseEvent', {
       type, x: point.x, y: point.y, button: 'left', clickCount: 1,
     });
+    // CDP dispatch returns before the renderer runs the click handler; let the
+    // event loop drain so immediate post-click assertions observe handler state.
+    await evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
     if (selector === '#btn-theme' && settle) await waitFor(`typeof THEME_BUSY==='undefined' || !THEME_BUSY`);
   };
   const key = async (key, code, keyCode) => {
@@ -152,7 +155,11 @@ try {
   };
   const reset = async () => {
     await navigate();
+    // Drain any delayed theme write from the previous check before clearing,
+    // or the write can land after clear() and leak into the next check.
+    await waitFor(`typeof THEME_BUSY==='undefined' || !THEME_BUSY`);
     await evaluate('try{localStorage.clear();}catch{}');
+    await evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
     await navigate();
   };
   const check = async (name, run) => {
