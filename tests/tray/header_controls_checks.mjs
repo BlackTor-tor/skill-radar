@@ -27,6 +27,14 @@ const readPort = async file => {
   }
   throw new Error(`Chromium endpoint file remained locked: ${file}`);
 };
+const readPages = async port => {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    try { return await (await fetch(`http://127.0.0.1:${port}/json/list`)).json(); }
+    catch (error) { await pause(40); }
+  }
+  throw new Error(`Chromium endpoint did not accept /json/list: ${port}`);
+};
 const state = {
   guard: 'running', paused: false, watched_roots: 1, today: {},
   settings: {language: 'zh-CN', roots: [{path: 'F:/Skills'}]},
@@ -78,7 +86,7 @@ try {
   while (!existsSync(portFile) && Date.now() < deadline) await pause(40);
   assert(existsSync(portFile), 'Chromium did not expose its temporary endpoint');
   const port = await readPort(portFile);
-  const pages = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+  const pages = await readPages(port);
   const target = pages.find(page => page.type === 'page');
   assert(target, 'Chromium did not create a page target');
   ws = new WebSocket(target.webSocketDebuggerUrl);

@@ -14,6 +14,7 @@ const htmlPath=resolve(option('--html') || resolve(repo,'tray/web/index.html'));
 const profile=mkdtempSync(resolve(tmpdir(),'skill-radar-usage-recent-sort-'));
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const readPort=async file=>{const deadline=Date.now()+5000;while(Date.now()<deadline){try{return readFileSync(file,'utf8').split(/\r?\n/)[0]}catch(error){if(!['EBUSY','EACCES'].includes(error.code))throw error;await pause(40)}}throw new Error('Chromium endpoint file remained locked: '+file)};
+const readPages=async port=>{const deadline=Date.now()+5000;while(Date.now()<deadline){try{return await(await fetch(`http://127.0.0.1:${port}/json/list`)).json()}catch{await pause(40)}}throw new Error('Chromium endpoint did not accept /json/list: '+port)};
 const usage={ok:true,rows:[
   {name:'older-many',total:99,codex:99,zcode:0,claude:0,marker:0,last:'2026-10-01T00:00:00Z'},
   {name:'newer-few',total:1,codex:1,zcode:0,claude:0,marker:0,last:'2026-10-04T12:00:00Z'},
@@ -33,7 +34,7 @@ try {
   while(!existsSync(portFile)&&Date.now()<deadline)await pause(40);
   assert(existsSync(portFile),'Chromium did not expose its temporary endpoint');
   const port=await readPort(portFile);
-  const target=(await(await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(page=>page.type==='page');
+  const target=(await readPages(port)).find(page=>page.type==='page');
   ws=new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((resolve,reject)=>{ws.addEventListener('open',resolve,{once:true});ws.addEventListener('error',reject,{once:true});});
   let id=0; const pending=new Map();
