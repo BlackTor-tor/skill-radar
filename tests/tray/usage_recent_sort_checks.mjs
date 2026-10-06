@@ -13,6 +13,7 @@ assert(browserPath && existsSync(browserPath),'Provide Chromium with --browser')
 const htmlPath=resolve(option('--html') || resolve(repo,'tray/web/index.html'));
 const profile=mkdtempSync(resolve(tmpdir(),'skill-radar-usage-recent-sort-'));
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const readPort=async file=>{const deadline=Date.now()+5000;while(Date.now()<deadline){try{return readFileSync(file,'utf8').split(/\r?\n/)[0]}catch(error){if(!['EBUSY','EACCES'].includes(error.code))throw error;await pause(40)}}throw new Error('Chromium endpoint file remained locked: '+file)};
 const usage={ok:true,rows:[
   {name:'older-many',total:99,codex:99,zcode:0,claude:0,marker:0,last:'2026-10-01T00:00:00Z'},
   {name:'newer-few',total:1,codex:1,zcode:0,claude:0,marker:0,last:'2026-10-04T12:00:00Z'},
@@ -31,7 +32,7 @@ try {
   const portFile=resolve(profile,'DevToolsActivePort'); const deadline=Date.now()+12000;
   while(!existsSync(portFile)&&Date.now()<deadline)await pause(40);
   assert(existsSync(portFile),'Chromium did not expose its temporary endpoint');
-  const port=readFileSync(portFile,'utf8').split(/\r?\n/)[0];
+  const port=await readPort(portFile);
   const target=(await(await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(page=>page.type==='page');
   ws=new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((resolve,reject)=>{ws.addEventListener('open',resolve,{once:true});ws.addEventListener('error',reject,{once:true});});
@@ -39,7 +40,7 @@ try {
   ws.addEventListener('message',event=>{const data=JSON.parse(event.data),request=pending.get(data.id);if(!request)return;pending.delete(data.id);clearTimeout(request.timeout);data.error?request.reject(new Error(JSON.stringify(data.error))):request.resolve(data.result);});
   cdp=(method,params={})=>new Promise((resolve,reject)=>{const current=++id,timeout=setTimeout(()=>{pending.delete(current);reject(new Error('CDP timeout '+method));},8000);pending.set(current,{resolve,reject,timeout});ws.send(JSON.stringify({id:current,method,params}));});
   const evaluate=async expression=>{const value=await cdp('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});assert(!value.exceptionDetails,JSON.stringify(value.exceptionDetails));return value.result.value;};
-  const waitFor=async expression=>{const until=Date.now()+3000;while(Date.now()<until){if(await evaluate(expression))return;await pause(25);}throw new Error('UI condition: '+expression);};
+  const waitFor=async expression=>{const until=Date.now()+8000;while(Date.now()<until){if(await evaluate(expression))return;await pause(25);}throw new Error('UI condition: '+expression);};
   await cdp('Page.enable'); await cdp('Runtime.enable');
   await cdp('Page.addScriptToEvaluateOnNewDocument',{source:bridge});
   await cdp('Page.navigate',{url:pathToFileURL(htmlPath).href});

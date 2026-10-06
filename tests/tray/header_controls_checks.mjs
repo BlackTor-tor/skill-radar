@@ -16,6 +16,17 @@ const htmlPath = resolve(option('--html') || resolve(repo, 'tray/web/index.html'
 const captureDir = option('--capture-dir');
 const profile = mkdtempSync(resolve(tmpdir(), 'skill-radar-header-'));
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+const readPort = async file => {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    try { return readFileSync(file, 'utf8').split(/\r?\n/)[0]; }
+    catch (error) {
+      if (error.code !== 'EBUSY' && error.code !== 'EACCES') throw error;
+      await pause(40);
+    }
+  }
+  throw new Error(`Chromium endpoint file remained locked: ${file}`);
+};
 const state = {
   guard: 'running', paused: false, watched_roots: 1, today: {},
   settings: {language: 'zh-CN', roots: [{path: 'F:/Skills'}]},
@@ -66,7 +77,7 @@ try {
   const deadline = Date.now() + 12000;
   while (!existsSync(portFile) && Date.now() < deadline) await pause(40);
   assert(existsSync(portFile), 'Chromium did not expose its temporary endpoint');
-  const port = readFileSync(portFile, 'utf8').split(/\r?\n/)[0];
+  const port = await readPort(portFile);
   const pages = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
   const target = pages.find(page => page.type === 'page');
   assert(target, 'Chromium did not create a page target');
