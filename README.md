@@ -188,6 +188,10 @@ python -m pytest tests -q
 
 Desktop targets Windows/macOS with ReadDirectoryChangesW/FSEvents and a polling fallback. macOS distribution is unsigned/not notarized: if a downloaded app is blocked, attempt opening once and use Privacy & Security → Open Anyway. Locally built apps normally lack the downloaded quarantine attribute.
 
+### Releases
+
+每次 `main` 分支的 `macos-tray` CI 成功后，发布流水线会固定使用该次 CI 的提交生成 Windows x64、macOS arm64 和 macOS x64 产物，并自动递增 patch 版本（例如 `v2.2.0` → `v2.2.1`）创建 GitHub Release。CI 失败、提交已发布，或 `main` 已继续前进时不会发布旧产物。也可以推送 `vX.Y.Z` 标签，或在 Actions 手动运行并填写版本号发布。
+
 ## Files and limits
 
 | File | Purpose |

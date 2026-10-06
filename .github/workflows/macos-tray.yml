@@ -7,7 +7,7 @@ name: macos-tray
 on:
   push:
     branches: [main]
-    paths: ['src/**', 'tray/**', 'tests/**', 'rules/**', 'pytest.ini', 'requirements-gui.txt', 'build_tray.py', '.github/workflows/macos-tray.yml']
+    paths: ['src/**', 'tray/**', 'tests/**', 'rules/**', 'pytest.ini', 'requirements-gui.txt', 'build_tray.py', '.github/workflows/macos-tray.yml', '.github/workflows/release.yml', '.github/scripts/**']
   workflow_dispatch:
 
 jobs:

@@ -1,19 +1,18 @@
-# 版本发布（两条路径，产物都进 GitHub Releases）：
-# 1) push tag（如 v2.2.0）→ 多平台构建 → 发布；
-# 2) 手动 Run workflow 填 version（如 v2.2.0 / 2.2.0 均可）→ 流水线在当前 main
-#    HEAD 上自动建 tag → 构建 → 发布（tag 由 publish 步骤创建，无需本地打 tag）。
-# 手动触发且 version 留空 = 只构建、不发布。
-#
-# macOS 双架构（背景：macos-13 Intel runner 已于 2025-12-04 退役）：
-#   - arm64：macos-14 (M1) 原生构建；
-#   - x64：同 runner 上安装 Rosetta 2 + x64 Python 交叉构建（PyInstaller 按
-#     运行中解释器的架构打包，cibuildwheel 同款模式）。
-#   不用 --target-arch universal2：需要全链路 universal2 依赖，失败率高。
+# 版本发布：标签、手动运行，或 main 分支 macOS CI 成功后自动发布。
+# 自动发布固定使用触发 CI 的 commit；CI 失败、过期或非本仓库运行不会发布。
 name: release
+
+concurrency:
+  group: skill-radar-release-main
+  cancel-in-progress: false
 
 on:
   push:
     tags: ['v*']
+  workflow_run:
+    workflows: ['macos-tray']
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       version:
@@ -22,13 +21,97 @@ on:
         default: ''
 
 permissions:
-  contents: write   # 建 tag 与创建 Release 所需（显式声明，最小权限）
+  contents: write
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.plan.outputs.should_build }}
+      should_publish: ${{ steps.plan.outputs.should_publish }}
+      target_sha: ${{ steps.plan.outputs.target_sha }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Plan release
+        id: plan
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const event = context.eventName;
+            const repo = context.repo;
+            const run = context.payload.workflow_run;
+            const input = context.payload.inputs?.version || '';
+            const {normalizeVersion, nextPatch, checkoutSha, autoDecision} =
+              require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/release-plan.cjs`);
+
+            let shouldBuild = true;
+            let shouldPublish = true;
+            let targetSha = checkoutSha({
+              eventName: event, githubSha: context.sha, workflowRun: run,
+            });
+            let version = '';
+            if (event === 'workflow_run') {
+              const tags = await github.paginate(github.rest.repos.listTags, {
+                owner: repo.owner, repo: repo.repo, per_page: 100,
+              });
+              version = nextPatch(tags.map((tag) => tag.name));
+              const releases = await github.paginate(github.rest.repos.listReleases, {
+                owner: repo.owner, repo: repo.repo, per_page: 100,
+              });
+              const main = await github.rest.repos.getBranch({
+                owner: repo.owner, repo: repo.repo, branch: 'main',
+              });
+              shouldPublish = autoDecision({
+                event: run?.event,
+                conclusion: run?.conclusion,
+                headBranch: run?.head_branch,
+                headRepository: run?.head_repository?.full_name,
+                repository: `${repo.owner}/${repo.repo}`,
+                expectedRepository: `${repo.owner}/${repo.repo}`,
+                targetSha,
+                mainSha: main.data.commit.sha,
+                releaseShas: releases.map((release) => release.target_commitish),
+              }).publish;
+              if (releases.some((release) => release.tag_name === version)) {
+                shouldPublish = false;
+              }
+              shouldBuild = shouldPublish;
+            } else if (event === 'push') {
+              version = normalize(context.ref.replace('refs/tags/', ''));
+            } else if (event === 'workflow_dispatch') {
+              shouldPublish = Boolean(input.trim());
+              if (shouldPublish) version = normalize(input);
+            } else {
+              shouldBuild = false;
+              shouldPublish = false;
+            }
+
+            if (shouldPublish && event !== 'workflow_run') {
+              const releases = await github.paginate(github.rest.repos.listReleases, {
+                owner: repo.owner, repo: repo.repo, per_page: 100,
+              });
+              const duplicate = releases.some((release) =>
+                release.tag_name === version || release.target_commitish === targetSha);
+              if (duplicate) {
+                shouldPublish = false;
+                shouldBuild = false;
+              }
+            }
+            core.setOutput('should_build', String(shouldBuild));
+            core.setOutput('should_publish', String(shouldPublish));
+            core.setOutput('target_sha', targetSha);
+            core.setOutput('version', version);
+            core.info(JSON.stringify({event, shouldBuild, shouldPublish, targetSha, version}));
+
   windows:
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.target_sha }}
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
       - run: |
@@ -44,15 +127,19 @@ jobs:
           retention-days: 14
 
   macos:
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { arch: arm64, py_arch: arm64 }   # Apple Silicon 原生
-          - { arch: x64,   py_arch: x64 }     # Intel，经 Rosetta 交叉构建
+          - { arch: arm64, py_arch: arm64 }
+          - { arch: x64, py_arch: x64 }
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.target_sha }}
       - name: Install Rosetta 2 (x64 cross-build)
         if: matrix.py_arch == 'x64'
         run: softwareupdate --install-rosetta --agree-to-license
@@ -60,10 +147,8 @@ jobs:
         with:
           python-version: '3.12'
           architecture: ${{ matrix.py_arch }}
-
       - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
+        with: { node-version: '22' }
       - name: Install Chromium for browser checks
         id: chrome
         uses: browser-actions/setup-chrome@v1
@@ -92,18 +177,12 @@ jobs:
           retention-days: 14
 
   publish:
+    needs: [prepare, windows, macos]
     if: >-
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
-      (github.event_name == 'workflow_dispatch' && inputs.version != '')
-    needs: [windows, macos]
+      always() && needs.prepare.outputs.should_publish == 'true' &&
+      needs.windows.result == 'success' && needs.macos.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - name: Resolve version
-        id: ver
-        run: |
-          V="${{ github.event_name == 'push' && github.ref_name || inputs.version }}"
-          case "$V" in v*) ;; *) V="v$V";; esac   # 归一为 v 前缀
-          echo "version=$V" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
         with: { path: artifacts }
       - name: Prepare release files
@@ -112,25 +191,21 @@ jobs:
           cp artifacts/SkillRadarTray-windows/SkillRadarTray.exe release/SkillRadarTray_windows_x64.exe
           cp artifacts/SkillRadarTray-macos-arm64/SkillRadarTray.dmg release/SkillRadarTray_macos_arm64.dmg
           cp artifacts/SkillRadarTray-macos-x64/SkillRadarTray.dmg release/SkillRadarTray_macos_x64.dmg
-          ls -la "${{ github.workspace }}/release"
+          ls -la release
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.ver.outputs.version }}   # tag 不存在时自动在当前 SHA 上创建
-          target_commitish: ${{ github.sha }}
-          name: skill-radar ${{ steps.ver.outputs.version }}
+          tag_name: ${{ needs.prepare.outputs.version }}
+          target_commitish: ${{ needs.prepare.outputs.target_sha }}
+          name: skill-radar ${{ needs.prepare.outputs.version }}
           files: |
             release/SkillRadarTray_windows_x64.exe
             release/SkillRadarTray_macos_arm64.dmg
             release/SkillRadarTray_macos_x64.dmg
           body: |
-            skill-radar ${{ steps.ver.outputs.version }}
+            skill-radar ${{ needs.prepare.outputs.version }}
 
-            - **SkillRadarTray_windows_x64.exe** — Windows 托盘守护（onefile，双击即用；x64/AMD64）
-            - **SkillRadarTray_macos_arm64.dmg** — macOS（Apple Silicon M1–Mx 原生）
-            - **SkillRadarTray_macos_x64.dmg** — macOS（Intel 芯片）
-              打开 dmg 后把 .app 拖入 Applications。未签名/未公证：下载后首次启动会被
-              Gatekeeper 拦截——macOS 13/14 右键 → 打开；macOS 15+ 到 系统设置 →
-              隐私与安全性 → 「仍要打开」，详见 README。
-            - CLI（scan / audit / add 网关 / report）不在包内：以源码运行（零依赖），见 README 快速开始
+            - **SkillRadarTray_windows_x64.exe** — Windows 托盘守护（x64/AMD64）
+            - **SkillRadarTray_macos_arm64.dmg** — macOS Apple Silicon
+            - **SkillRadarTray_macos_x64.dmg** — macOS Intel
 
-            变更日志见本 tag 与上一 tag 的对比。
+            此版本由 main 分支 CI 通过后自动构建发布。
