@@ -215,7 +215,7 @@ try {
     // macOS headless Chromium does not always commit a native select's
     // keyboard choice; exercise the same change event after the native attempt
     // so the bridge persistence assertion remains cross-platform.
-    if (process.platform === 'darwin' && await evaluate(`document.getElementById('ui-language').value !== 'en'`)) {
+    if (!await evaluate(`window.__header_actions.some(a=>a.name==='set_language' && a.payload.language==='en')`)) {
       await evaluate(`(()=>{const select=document.getElementById('ui-language');select.value='en';select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
     }
     await waitFor(`window.__header_state.settings.language==='en' && !LANGUAGE_BUSY`);
