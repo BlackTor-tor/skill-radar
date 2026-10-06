@@ -26,6 +26,7 @@ def sidebar_results():
 
 
 @pytest.mark.parametrize("behavior", ["sidebar_starts_expanded", "sidebar_collapses_and_keeps_navigation",
-    "sidebar_state_survives_reload", "sidebar_keyboard_toggle", "sidebar_fits_narrow_desktop"])
+    "sidebar_collapsed_brand_centered", "sidebar_state_survives_reload", "sidebar_keyboard_toggle",
+    "sidebar_fits_narrow_desktop"])
 def test_sidebar_collapse(sidebar_results, behavior):
     assert sidebar_results[behavior]["ok"], sidebar_results[behavior].get("error")
